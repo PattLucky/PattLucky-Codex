@@ -24,6 +24,8 @@ using System.Reflection;
 internal static class PattLuckyCodex
 {
     private const string AppUrl = "http://127.0.0.1:43771/";
+    private const string GitHubLatestReleaseApi = "https://api.github.com/repos/PattLucky/PattLucky-Codex/releases/latest";
+    private const string GitHubReleasesPage = "https://github.com/PattLucky/PattLucky-Codex/releases/latest";
     private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
     private static readonly AgentInfo[] Agents = {
         new AgentInfo("writer", "Essays & documents", "gemma4:12b", "About 7.7–8 GB", "Draft and polish essays, reports, and documents."),
@@ -41,12 +43,16 @@ internal static class PattLuckyCodex
     private static TextBox prompt;
     private static ComboBox agentPicker;
     private static Label ollamaLabel, runtimeLabel, countsLabel, speedLabel, modelLabel, hintLabel, welcomeStatus;
+    private static Label headerTitle;
     private static Button getModelButton, sendButton;
+    private static Panel headerPanel;
     private static PictureBox spinner;
-    private static System.Windows.Forms.Timer statusTimer, runtimeTimer, spinTimer;
+    private static System.Windows.Forms.Timer statusTimer, runtimeTimer, spinTimer, resizeTimer;
     private static Image logo;
     private static int spinAngle;
     private static bool busy, connected;
+    private static bool storageWriteBlocked;
+    private static string startupStorageNotice;
     private static long sessionStart = Environment.TickCount;
     private static string selected = "writer";
     private static readonly HashSet<string> availableModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -65,6 +71,7 @@ internal static class PattLuckyCodex
     }
     private static string DataDirectory { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PattLucky Codex"); } }
     private static string ChatPath { get { return Path.Combine(DataDirectory, "chats.json"); } }
+    private static string CurrentVersion { get { Version version = Assembly.GetExecutingAssembly().GetName().Version; return version == null ? "1.0.0" : version.ToString(3); } }
 
     [STAThread]
     private static int Main()
@@ -149,7 +156,8 @@ internal static class PattLuckyCodex
     {
         using (Image original = Image.FromFile(FindResource("PattLuckyLogo.png")))
             logo = IsDarkTheme() ? TintLogo(original, Lime) : new Bitmap(original);
-        form = new BufferedForm(); form.Text = "PattLucky Codex Ver 1.0.0."; form.Icon = new Icon(FindResource("PattLuckyCodex.ico"));
+        form = new BufferedForm(); form.Text = "PattLucky Codex Ver " + CurrentVersion + "."; form.Icon = new Icon(FindResource("PattLuckyCodex.ico"));
+        form.AutoScaleDimensions = new SizeF(96f, 96f); form.AutoScaleMode = AutoScaleMode.Dpi;
         form.MinimumSize = new Size(760, 560); form.Size = new Size(1200, 800); form.StartPosition = FormStartPosition.CenterScreen;
         form.BackColor = bg; form.ForeColor = fg; form.Font = new Font("Segoe UI", 9.5f); form.KeyPreview = true;
         TableLayoutPanel layout = new TableLayoutPanel(); layout.Dock = DockStyle.Fill; layout.ColumnCount = 2; layout.RowCount = 1;
@@ -157,10 +165,15 @@ internal static class PattLuckyCodex
         layout.Controls.Add(BuildSidebar(), 0, 0); layout.Controls.Add(BuildMain(), 1, 0);
         LoadChats(); if (chats.Count > 0) current = chats[0]; else NewChat();
         RefreshHistory(); RefreshMessages(); UpdateAgent();
+        if (!String.IsNullOrEmpty(startupStorageNotice)) SetHint(startupStorageNotice);
+        resizeTimer = new System.Windows.Forms.Timer(); resizeTimer.Interval = 180; resizeTimer.Tick += delegate { resizeTimer.Stop(); LayoutHeader(); ResizeHistoryItems(); if (!busy && current != null) RefreshMessages(); };
+        form.Resize += delegate { if (resizeTimer != null) { resizeTimer.Stop(); resizeTimer.Start(); } };
+        form.Shown += delegate { CheckForUpdates(); };
+        form.FormClosing += delegate { SaveChats(); };
         statusTimer = new System.Windows.Forms.Timer(); statusTimer.Interval = 4000; statusTimer.Tick += delegate { RefreshStatus(); }; statusTimer.Start(); RefreshStatus();
         runtimeTimer = new System.Windows.Forms.Timer(); runtimeTimer.Interval = 1000; runtimeTimer.Tick += delegate { UpdateMonitor(); }; runtimeTimer.Start(); UpdateMonitor();
         spinTimer = new System.Windows.Forms.Timer(); spinTimer.Interval = 45; spinTimer.Tick += delegate { spinAngle = (spinAngle + 8) % 360; spinner.Invalidate(); };
-        form.FormClosed += delegate { statusTimer.Stop(); runtimeTimer.Stop(); if (spinTimer != null) spinTimer.Stop(); if (logo != null) logo.Dispose(); };
+        form.FormClosed += delegate { statusTimer.Stop(); runtimeTimer.Stop(); if (spinTimer != null) spinTimer.Stop(); if (resizeTimer != null) resizeTimer.Stop(); if (logo != null) logo.Dispose(); };
         return form;
     }
 
@@ -171,7 +184,7 @@ internal static class PattLuckyCodex
         stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 58)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 47)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 28)); stack.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 38)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 36)); side.Controls.Add(stack);
         Panel brand = new Panel(); brand.Dock = DockStyle.Fill; PictureBox mark = new PictureBox(); mark.Image = logo; mark.SizeMode = PictureBoxSizeMode.Zoom; mark.SetBounds(3, 4, 42, 42); brand.Controls.Add(mark);
         Label title = new Label(); title.Text = "PattLucky Codex"; title.Font = new Font("Segoe UI", 11, FontStyle.Bold); title.ForeColor = fg; title.SetBounds(54, 5, 185, 23); brand.Controls.Add(title);
-        Label ver = new Label(); ver.Text = "Local AI workspace · Ver 1.0.0."; ver.Font = new Font("Segoe UI", 8.5f); ver.ForeColor = muted; ver.SetBounds(54, 29, 200, 20); brand.Controls.Add(ver); stack.Controls.Add(brand, 0, 0);
+        Label ver = new Label(); ver.Text = "Local AI workspace · Ver " + CurrentVersion + "."; ver.Font = new Font("Segoe UI", 8.5f); ver.ForeColor = muted; ver.SetBounds(54, 29, 200, 20); brand.Controls.Add(ver); stack.Controls.Add(brand, 0, 0);
         Button newChat = MakeButton("＋   New chat", true); newChat.Dock = DockStyle.Fill; newChat.Click += delegate { NewChat(); RefreshHistory(); RefreshMessages(); UpdateMonitor(); }; stack.Controls.Add(newChat, 0, 1);
         Label historyTitle = new Label(); historyTitle.Text = "RECENT CHATS"; historyTitle.ForeColor = muted; historyTitle.Font = new Font("Segoe UI", 8, FontStyle.Bold); historyTitle.TextAlign = ContentAlignment.MiddleLeft; stack.Controls.Add(historyTitle, 0, 2);
         history = new BufferedFlowLayoutPanel(); history.Dock = DockStyle.Fill; history.FlowDirection = FlowDirection.TopDown; history.WrapContents = false; history.AutoScroll = true; history.BackColor = sidebar; stack.Controls.Add(history, 0, 3);
@@ -186,7 +199,7 @@ internal static class PattLuckyCodex
         Button export = MakeButton("Export chat history", false); export.SetBounds(0, 61, 233, 27); export.Click += delegate { ExportChats(); }; statusDetails.Controls.Add(export);
         statusToggle.Click += delegate { statusExpanded = !statusExpanded; statusDetails.Visible = statusExpanded; sidebarStack.RowStyles[4].Height = statusExpanded ? 126 : 38; statusToggle.Text = StatusToggleText(); };
         bottom.Controls.Add(statusDetails); bottom.Controls.Add(statusToggle); statusToggle.BringToFront(); stack.Controls.Add(bottom, 0, 4);
-        Label note = new Label(); note.Text = "Runs locally with Ollama"; note.ForeColor = muted; note.TextAlign = ContentAlignment.MiddleLeft; note.Dock = DockStyle.Fill; note.Font = new Font("Segoe UI", 8.5f); stack.Controls.Add(note, 0, 5);
+        Label note = new Label(); note.Text = "Chats save on this device"; note.ForeColor = muted; note.TextAlign = ContentAlignment.MiddleLeft; note.Dock = DockStyle.Fill; note.Font = new Font("Segoe UI", 8.5f); stack.Controls.Add(note, 0, 5);
         return side;
     }
 
@@ -196,11 +209,13 @@ internal static class PattLuckyCodex
         TableLayoutPanel stack = new TableLayoutPanel(); stack.Dock = DockStyle.Fill; stack.ColumnCount = 1; stack.RowCount = 3;
         stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 65)); stack.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 125)); main.Controls.Add(stack);
         Panel top = new BufferedPanel(); top.Dock = DockStyle.Fill; top.BackColor = panel; top.Padding = new Padding(20, 10, 20, 10); top.Paint += delegate(object s, PaintEventArgs e) { using (Pen p = new Pen(line)) e.Graphics.DrawLine(p, 0, top.Height - 1, top.Width, top.Height - 1); };
-        Label appTitle = new Label(); appTitle.Text = "Chat"; appTitle.Font = new Font("Segoe UI", 12, FontStyle.Bold); appTitle.ForeColor = fg; appTitle.Location = new Point(16, 20); appTitle.AutoSize = true; top.Controls.Add(appTitle);
+        headerPanel = top;
+        headerTitle = new Label(); headerTitle.Text = "Chat"; headerTitle.Font = new Font("Segoe UI", 12, FontStyle.Bold); headerTitle.ForeColor = fg; headerTitle.Location = new Point(16, 20); headerTitle.AutoSize = true; top.Controls.Add(headerTitle);
         agentPicker = new ComboBox(); agentPicker.DropDownStyle = ComboBoxStyle.DropDownList; agentPicker.Width = 205; agentPicker.Location = new Point(105, 17); agentPicker.BackColor = panel; agentPicker.ForeColor = fg;
         foreach (AgentInfo agent in Agents) agentPicker.Items.Add(agent.Name); agentPicker.SelectedIndexChanged += delegate { if (agentPicker.SelectedIndex >= 0) { selected = Agents[agentPicker.SelectedIndex].Key; if (current != null) current.Agent = selected; SaveChats(); UpdateAgent(); RefreshMessages(); } }; top.Controls.Add(agentPicker);
-        getModelButton = MakeButton("Get model", false); getModelButton.Size = new Size(105, 34); getModelButton.Anchor = AnchorStyles.Top | AnchorStyles.Right; getModelButton.Location = new Point(Math.Max(450, top.Width - 130), 12); top.Resize += delegate { getModelButton.Left = top.ClientSize.Width - getModelButton.Width - 8; }; getModelButton.Click += delegate { PullModel(); }; top.Controls.Add(getModelButton);
-        modelLabel = new Label(); modelLabel.AutoSize = true; modelLabel.ForeColor = muted; modelLabel.Font = new Font("Segoe UI", 8.5f); modelLabel.Location = new Point(322, 23); top.Controls.Add(modelLabel); stack.Controls.Add(top, 0, 0);
+        getModelButton = MakeButton("Get model", false); getModelButton.Size = new Size(105, 34); getModelButton.Anchor = AnchorStyles.Top | AnchorStyles.Right; getModelButton.Click += delegate { PullModel(); }; top.Controls.Add(getModelButton);
+        modelLabel = new Label(); modelLabel.AutoSize = true; modelLabel.ForeColor = muted; modelLabel.Font = new Font("Segoe UI", 8.5f); top.Controls.Add(modelLabel); stack.Controls.Add(top, 0, 0);
+        top.Resize += delegate { LayoutHeader(); };
         messages = new BufferedFlowLayoutPanel(); messages.Dock = DockStyle.Fill; messages.FlowDirection = FlowDirection.TopDown; messages.WrapContents = false; messages.AutoScroll = true; messages.Padding = new Padding(18, 18, 18, 18); messages.BackColor = bg;
         messages.Paint += delegate(object sender, PaintEventArgs e) { if (logo == null) return; Rectangle r = new Rectangle((messages.ClientSize.Width - 300) / 2, (messages.ClientSize.Height - 300) / 2, 300, 300); using (ImageAttributes a = new ImageAttributes()) { a.SetColorMatrix(new ColorMatrix { Matrix33 = 0.035f }); e.Graphics.DrawImage(logo, r, 0, 0, logo.Width, logo.Height, GraphicsUnit.Pixel, a); } };
         stack.Controls.Add(messages, 0, 1);
@@ -215,7 +230,7 @@ internal static class PattLuckyCodex
 
     private static Button MakeButton(string text, bool primary)
     {
-        Button b = new Button(); b.Text = text.Replace("&", "&&"); b.FlatStyle = FlatStyle.Flat; b.FlatAppearance.BorderSize = primary ? 0 : 1; b.FlatAppearance.BorderColor = line; b.BackColor = primary ? Lime : panel; b.ForeColor = primary ? Color.FromArgb(29, 40, 15) : fg; b.Font = new Font("Segoe UI", 9, primary ? FontStyle.Bold : FontStyle.Regular); b.Cursor = Cursors.Hand; return b;
+        ModernButton b = new ModernButton(); b.Primary = primary; b.Text = text.Replace("&", "&&"); b.BackColor = primary ? Lime : panel; b.ForeColor = primary ? Color.FromArgb(29, 40, 15) : fg; b.Font = new Font("Segoe UI", 9, primary ? FontStyle.Bold : FontStyle.Regular); b.TextAlign = ContentAlignment.MiddleCenter; b.Padding = new Padding(12, 0, 12, 0); b.Cursor = Cursors.Hand; return b;
     }
 
     private static void NewChat()
@@ -233,13 +248,35 @@ internal static class PattLuckyCodex
         history.ResumeLayout(); UpdateMonitor();
     }
 
+    private static void ResizeHistoryItems()
+    {
+        if (history == null) return;
+        int width = Math.Max(150, history.ClientSize.Width - 28);
+        foreach (Control item in history.Controls) item.Width = width;
+    }
+
+    private static void LayoutHeader()
+    {
+        if (headerPanel == null || agentPicker == null || getModelButton == null) return;
+        int width = headerPanel.ClientSize.Width;
+        getModelButton.Left = Math.Max(8, width - getModelButton.Width - 12);
+        int pickerLeft = 105;
+        int rightEdge = getModelButton.Left - 14;
+        modelLabel.Visible = width >= 650;
+        int pickerWidth = modelLabel.Visible ? 205 : Math.Max(150, Math.Min(245, rightEdge - pickerLeft - 8));
+        agentPicker.SetBounds(pickerLeft, 17, pickerWidth, agentPicker.Height);
+        modelLabel.Left = pickerLeft + pickerWidth + 12;
+        modelLabel.Top = 23;
+        modelLabel.MaximumSize = new Size(Math.Max(0, rightEdge - modelLabel.Left), 22);
+    }
+
     private static void RefreshMessages()
     {
         if (messages == null) return; messages.SuspendLayout(); messages.Controls.Clear();
         if (current == null || current.Messages.Count == 0)
         {
             welcomeStatus = null;
-            Panel welcome = new Panel(); welcome.Width = Math.Max(480, messages.ClientSize.Width - 55); welcome.Height = 350; welcome.BackColor = Color.Transparent;
+            Panel welcome = new Panel(); welcome.Width = Math.Max(320, messages.ClientSize.Width - messages.Padding.Horizontal - 24); welcome.Height = 350; welcome.BackColor = Color.Transparent;
             PictureBox image = new PictureBox(); image.Image = logo; image.SizeMode = PictureBoxSizeMode.Zoom; image.SetBounds((welcome.Width - 88) / 2, 8, 88, 88); welcome.Controls.Add(image);
             Label heading = new Label(); heading.Text = "Local AI. Your workspace."; heading.Font = new Font("Segoe UI", 21, FontStyle.Bold); heading.ForeColor = fg; heading.TextAlign = ContentAlignment.MiddleCenter; heading.SetBounds(10, 104, welcome.Width - 20, 44); welcome.Controls.Add(heading);
             welcomeStatus = new Label(); welcomeStatus.Text = connected ? "Ollama is connected. Choose an agent and install its model to begin." : "Start Ollama, choose an agent, and install its model to begin."; welcomeStatus.Font = new Font("Segoe UI", 10); welcomeStatus.ForeColor = muted; welcomeStatus.Size = new Size(Math.Min(520, welcome.Width - 30), 44); welcomeStatus.TextAlign = ContentAlignment.MiddleCenter; welcomeStatus.Location = new Point((welcome.Width - welcomeStatus.Width) / 2, 150); welcome.Controls.Add(welcomeStatus);
@@ -315,6 +352,46 @@ internal static class PattLuckyCodex
         });
     }
 
+    private static void CheckForUpdates()
+    {
+        ThreadPool.QueueUserWorkItem(delegate {
+            try
+            {
+                ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(GitHubLatestReleaseApi);
+                request.Method = "GET"; request.Accept = "application/vnd.github+json"; request.UserAgent = "PattLuckyCodex/" + CurrentVersion; request.Timeout = 8000; request.ReadWriteTimeout = 8000;
+                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+                using (StreamReader reader = new StreamReader(response.GetResponseStream()))
+                {
+                    Dictionary<string, object> release = Json.Deserialize<Dictionary<string, object>>(reader.ReadToEnd());
+                    string tag = release.ContainsKey("tag_name") ? Convert.ToString(release["tag_name"]) : "";
+                    Version latest, currentVersion = new Version(CurrentVersion);
+                    if (!Version.TryParse(tag.TrimStart('v', 'V'), out latest)) { BeginUpdate(delegate { SetHint("GitHub returned a release tag the updater could not read."); }); return; }
+                    if (latest > currentVersion) BeginUpdate(delegate { ShowUpdateDialog(latest.ToString()); });
+                    else BeginUpdate(delegate { SetHint("PattLucky Codex is up to date · v" + CurrentVersion); });
+                }
+            }
+            catch (WebException ex)
+            {
+                HttpWebResponse response = ex.Response as HttpWebResponse;
+                bool noRelease = response != null && response.StatusCode == HttpStatusCode.NotFound;
+                if (response != null) response.Close();
+                BeginUpdate(delegate { SetHint(noRelease ? "No public GitHub release is available yet." : "Could not check GitHub for updates. You can check again later."); });
+            }
+            catch { BeginUpdate(delegate { SetHint("Could not check GitHub for updates. You can check again later."); }); }
+        });
+    }
+
+    private static void ShowUpdateDialog(string latestVersion)
+    {
+        Form dialog = new Form(); dialog.Text = "PattLucky Codex update"; dialog.FormBorderStyle = FormBorderStyle.FixedDialog; dialog.MaximizeBox = false; dialog.MinimizeBox = false; dialog.ShowInTaskbar = false; dialog.StartPosition = FormStartPosition.CenterParent; dialog.ClientSize = new Size(460, 210); dialog.BackColor = panel; dialog.ForeColor = fg; dialog.Font = new Font("Segoe UI", 9.5f);
+        Label heading = new Label(); heading.Text = "A new version is ready"; heading.Font = new Font("Segoe UI", 16, FontStyle.Bold); heading.SetBounds(24, 22, 410, 34); heading.ForeColor = fg; dialog.Controls.Add(heading);
+        Label details = new Label(); details.Text = "You have v" + CurrentVersion + ". GitHub has v" + latestVersion + ". Open the release page to download the latest installer."; details.SetBounds(26, 66, 405, 55); details.ForeColor = muted; dialog.Controls.Add(details);
+        ModernButton later = new ModernButton(); later.Text = "Later"; later.BackColor = panel; later.ForeColor = fg; later.Size = new Size(98, 38); later.Location = new Point(213, 145); later.TextAlign = ContentAlignment.MiddleCenter; later.Padding = new Padding(10, 0, 10, 0); later.DialogResult = DialogResult.Cancel; dialog.Controls.Add(later);
+        ModernButton download = new ModernButton(); download.Primary = true; download.Text = "View update"; download.BackColor = Lime; download.ForeColor = Color.FromArgb(29, 40, 15); download.Font = new Font("Segoe UI", 9, FontStyle.Bold); download.Size = new Size(128, 38); download.Location = new Point(320, 145); download.TextAlign = ContentAlignment.MiddleCenter; download.Padding = new Padding(10, 0, 10, 0); download.Click += delegate { try { Process.Start(new ProcessStartInfo(GitHubReleasesPage) { UseShellExecute = true }); } catch { } dialog.Close(); }; dialog.Controls.Add(download);
+        dialog.AcceptButton = download; dialog.CancelButton = later; dialog.ShowDialog(form); dialog.Dispose();
+    }
+
     private static void UpdateMonitor()
     {
         if (runtimeLabel == null) return; long seconds = (Environment.TickCount - sessionStart) / 1000; runtimeLabel.Text = "Open " + (seconds / 60).ToString("00") + ":" + (seconds % 60).ToString("00"); int total = 0; foreach (ChatRecord chat in chats) total += chat.Messages.Count; countsLabel.Text = chats.Count + " chats · " + total + " msgs"; if (speedLabel.Text.Length == 0) speedLabel.Text = "Model speed: waiting for a reply";
@@ -340,14 +417,89 @@ internal static class PattLuckyCodex
     private static AgentInfo AgentByKey(string key) { foreach (AgentInfo a in Agents) if (a.Key == key) return a; return Agents[0]; }
     private static int AgentIndex(string key) { for (int i = 0; i < Agents.Length; i++) if (Agents[i].Key == key) return i; return 0; }
 
-    private static void LoadChats() { try { Directory.CreateDirectory(DataDirectory); if (File.Exists(ChatPath)) { List<ChatRecord> data = Json.Deserialize<List<ChatRecord>>(File.ReadAllText(ChatPath)); if (data != null) chats.AddRange(data); } } catch { chats.Clear(); } }
-    private static void SaveChats() { try { Directory.CreateDirectory(DataDirectory); File.WriteAllText(ChatPath, Json.Serialize(chats), Encoding.UTF8); } catch { } }
+    private static void LoadChats()
+    {
+        Directory.CreateDirectory(DataDirectory);
+        if (!File.Exists(ChatPath)) return;
+        try
+        {
+            List<ChatRecord> data = Json.Deserialize<List<ChatRecord>>(File.ReadAllText(ChatPath));
+            if (data != null) chats.AddRange(data);
+        }
+        catch
+        {
+            chats.Clear();
+            string backup = ChatPath + ".corrupt-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            try { File.Move(ChatPath, backup); startupStorageNotice = "Unreadable chat history was preserved as " + Path.GetFileName(backup) + "."; }
+            catch { storageWriteBlocked = true; startupStorageNotice = "Chat history could not be read or backed up. PattLucky Codex will not overwrite that file."; }
+        }
+    }
+
+    private static void SaveChats()
+    {
+        if (storageWriteBlocked) { if (hintLabel != null) SetHint(startupStorageNotice); return; }
+        string temp = ChatPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            Directory.CreateDirectory(DataDirectory);
+            File.WriteAllText(temp, Json.Serialize(chats), new UTF8Encoding(false));
+            if (File.Exists(ChatPath)) File.Replace(temp, ChatPath, ChatPath + ".bak", true);
+            else File.Move(temp, ChatPath);
+        }
+        catch (Exception ex)
+        {
+            try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+            string message = "Could not save local chat history: " + ex.Message;
+            if (hintLabel != null) SetHint(message);
+            else startupStorageNotice = message;
+        }
+    }
     private static void ExportChats() { using (SaveFileDialog dialog = new SaveFileDialog()) { dialog.FileName = "pattlucky-codex-chats.json"; dialog.Filter = "JSON files (*.json)|*.json"; if (dialog.ShowDialog(form) == DialogResult.OK) File.WriteAllText(dialog.FileName, Json.Serialize(chats), Encoding.UTF8); } }
 
     private sealed class AgentInfo { public string Key, Name, Model, Size, Description; public AgentInfo(string key, string name, string model, string size, string description) { Key = key; Name = name; Model = model; Size = size; Description = description; } }
     private sealed class BufferedForm : Form { public BufferedForm() { DoubleBuffered = true; ResizeRedraw = true; } }
     private sealed class BufferedPanel : Panel { public BufferedPanel() { DoubleBuffered = true; ResizeRedraw = true; } }
     private sealed class BufferedFlowLayoutPanel : FlowLayoutPanel { public BufferedFlowLayoutPanel() { DoubleBuffered = true; ResizeRedraw = true; } }
+    private sealed class ModernButton : Button
+    {
+        private bool hovered, pressed;
+        public bool Primary { get; set; }
+        public ModernButton() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true); FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; UseVisualStyleBackColor = false; }
+        protected override void OnMouseEnter(EventArgs e) { hovered = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { hovered = false; pressed = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnMouseDown(MouseEventArgs e) { if (e.Button == MouseButtons.Left) pressed = true; Invalidate(); base.OnMouseDown(e); }
+        protected override void OnMouseUp(MouseEventArgs e) { pressed = false; Invalidate(); base.OnMouseUp(e); }
+        protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            Color fill = BackColor;
+            if (!Enabled) fill = Primary ? Color.FromArgb(101, 125, 68) : Color.FromArgb(125, 130, 120);
+            else if (pressed) fill = Primary ? Color.FromArgb(112, 176, 15) : Blend(BackColor, Lime, 0.20f);
+            else if (hovered) fill = Primary ? Color.FromArgb(145, 216, 37) : Blend(BackColor, Lime, 0.11f);
+            Rectangle rect = new Rectangle(1, 1, Math.Max(0, Width - 3), Math.Max(0, Height - 3));
+            using (GraphicsPath path = RoundedPath(rect, 9))
+            using (SolidBrush brush = new SolidBrush(fill))
+            using (Pen border = new Pen(Primary ? fill : (hovered ? Lime : line), Focused ? 1.5f : 1f))
+            {
+                e.Graphics.FillPath(brush, path); e.Graphics.DrawPath(border, path);
+            }
+            Color textColor = Enabled ? ForeColor : Color.FromArgb(190, 190, 190);
+            TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding;
+            if (TextAlign == ContentAlignment.MiddleLeft || TextAlign == ContentAlignment.TopLeft || TextAlign == ContentAlignment.BottomLeft) flags |= TextFormatFlags.Left;
+            else if (TextAlign == ContentAlignment.MiddleRight || TextAlign == ContentAlignment.TopRight || TextAlign == ContentAlignment.BottomRight) flags |= TextFormatFlags.Right;
+            else flags |= TextFormatFlags.HorizontalCenter;
+            Rectangle textRect = Rectangle.Inflate(ClientRectangle, -Padding.Left, -Padding.Top);
+            TextRenderer.DrawText(e.Graphics, Text, Font, textRect, textColor, flags);
+            if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(rect, -5, -5), textColor, fill);
+        }
+        private static GraphicsPath RoundedPath(Rectangle r, int radius)
+        {
+            GraphicsPath path = new GraphicsPath(); int d = Math.Min(radius * 2, Math.Min(r.Width, r.Height));
+            path.AddArc(r.Left, r.Top, d, d, 180, 90); path.AddArc(r.Right - d, r.Top, d, d, 270, 90); path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90); path.AddArc(r.Left, r.Bottom - d, d, d, 90, 90); path.CloseFigure(); return path;
+        }
+        private static Color Blend(Color original, Color accent, float amount) { return Color.FromArgb((int)(original.R * (1 - amount) + accent.R * amount), (int)(original.G * (1 - amount) + accent.G * amount), (int)(original.B * (1 - amount) + accent.B * amount)); }
+    }
     public sealed class ChatRecord { public string Id { get; set; } public string Title { get; set; } public string Agent { get; set; } public List<MessageRecord> Messages { get; set; } public ChatRecord() { Messages = new List<MessageRecord>(); } }
     public sealed class MessageRecord { public string Role { get; set; } public string Content { get; set; } public string Agent { get; set; } public long Time { get; set; } }
 }

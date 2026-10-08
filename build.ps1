@@ -13,14 +13,18 @@ $freshName = 'PattLuckyCodex-Updated-' + [Guid]::NewGuid().ToString('N').Substri
 $freshExe = Join-Path $dist $freshName
 $source = Join-Path $root 'src\PattLuckyCodex.cs'
 $icon = Join-Path $root 'assets\PattLuckyCodex.ico'
+$sourceText = Get-Content -LiteralPath $source -Raw
+$versionMatch = [regex]::Match($sourceText,'AssemblyVersion\("(?<version>\d+\.\d+\.\d+)\.\d+"\)')
+if (-not $versionMatch.Success) { throw 'Could not read the app version from src\PattLuckyCodex.cs.' }
+$version = $versionMatch.Groups['version'].Value
 & $compiler /nologo /target:winexe /platform:anycpu /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll "/win32icon:$icon" "/out:$freshExe" $source
 if ($LASTEXITCODE -ne 0) { throw 'PattLucky Codex launcher compilation failed.' }
-$bundle = Join-Path $dist 'PattLuckyCodex-1.0.0.zip'
+$bundle = Join-Path $dist ("PattLuckyCodex-{0}.zip" -f $version)
 $bundleStream = $null
 $archive = $null
 try {
   try { Copy-Item -LiteralPath $freshExe -Destination $exe -Force; Remove-Item -LiteralPath $freshExe -Force; $freshExe = $exe }
-  catch { Write-Warning 'The app is open, so the current EXE is locked. The updated installer bundle and PattLuckyCodex-Updated.exe are still being built.' }
+  catch { Write-Warning ("The app is open, so the current EXE is locked. The bundle and {0} contain the new build." -f $freshName) }
   Add-Type -AssemblyName System.IO.Compression
   $bundleStream = [IO.File]::Open($bundle,[IO.FileMode]::Create)
   $archive = New-Object System.IO.Compression.ZipArchive($bundleStream,[System.IO.Compression.ZipArchiveMode]::Create)

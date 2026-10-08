@@ -24,11 +24,13 @@ The app requires Windows PowerShell 5.1, .NET Framework 4.x, and [Ollama for Win
 - Coding: `qwen3-coder:30b` (about 19 GB)
 - Creative writing: `qwen3.5:9b` (about 6.6–7.6 GB)
 
-Each model downloads only when selected. All three use roughly 34–35 GB of storage. Chat history is saved locally under `%LOCALAPPDATA%\PattLucky Codex\chats.json` and can be exported from the app.
+Each model downloads only when selected. All three use roughly 34–35 GB of storage. Chat history is saved locally under `%LOCALAPPDATA%\PattLucky Codex\chats.json`, written atomically with a previous-save backup, and can be exported from the app.
+
+At startup, the app checks the latest GitHub release and shows an update prompt when its version is newer. The checker needs internet access and a published release on the public repository; without a public release it reports that no update is available to check. Bump the assembly version in `src/PattLuckyCodex.cs`, rebuild, then attach the matching `dist/PattLuckyCodex-<version>.zip` as a GitHub release asset for future updates.
 
 ## Build from source
 
-Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1` from the project folder. The script compiles `src/PattLuckyCodex.cs` and writes the app and `PattLuckyCodex-1.0.0.zip` into `dist/`. The installer archive is flattened so the setup wizard can install it directly.
+Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1` from the project folder. The script compiles `src/PattLuckyCodex.cs` and writes the app and versioned ZIP bundle into `dist/`. The installer archive is flattened so the setup wizard can install it directly.
 
 To preview the desktop app from the terminal after building, run `.\dist\PattLuckyCodex.exe` from the project folder.
 
