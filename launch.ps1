@@ -1,11 +1,15 @@
 ﻿param([switch]$AppMode)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+function Find-AppFile([string]$name) {
+  foreach ($candidate in @((Join-Path $root $name),(Join-Path (Join-Path $root 'assets') $name),(Join-Path (Join-Path $root 'ui') $name),(Join-Path (Join-Path $root 'dist') $name))) { if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate } }
+  throw "Required app file '$name' was not found in the project or install folder."
+}
 $listener = [System.Net.HttpListener]::new()
 $listener.Prefixes.Add('http://127.0.0.1:43771/')
 $script:PullJobs = @{}
 $script:Agents = @{
-  writer = @{model='gemma4:12b';system='You are PattLucky Essay & Document Writer. Help plan, draft, edit, and polish essays and documents. Use clear structure and natural prose. Preserve the user’s meaning, distinguish facts from opinions, and flag claims that need sources instead of inventing citations.'}
+  writer = @{model='gemma4:12b';system='You are PattLucky Essay & Document Writer. Help plan, draft, edit, and polish essays and documents. Use clear structure and natural prose. Preserve the user provided meaning, distinguish facts from opinions, and flag claims that need sources instead of inventing citations.'}
   coding = @{model='qwen3-coder:30b';system='You are PattLucky Coding Agent. Help design, understand, debug, and write software. Give accurate code with brief explanations, ask for missing context when it blocks progress, and never claim that code was run unless it was.'}
   creative = @{model='qwen3.5:9b';system='You are PattLucky Creative Writing Agent. Help create original stories, scenes, dialogue, characters, and imaginative ideas. Follow the requested voice and constraints, use vivid specific details, and keep the prose engaging rather than generic.'}
 }
@@ -27,15 +31,15 @@ while ($listener.IsListening) {
   $ctx = $null
   try {
     $ctx = $listener.GetContext(); $path = $ctx.Request.Url.AbsolutePath
-    if ($ctx.Request.HttpMethod -eq 'GET' -and $path -eq '/') { Send-Response $ctx 200 'text/html; charset=utf-8' ([IO.File]::ReadAllBytes((Join-Path $root 'app.html'))); continue }
-    if ($ctx.Request.HttpMethod -eq 'GET' -and $path -eq '/PattLuckyLogo.png') { Send-Response $ctx 200 'image/png' ([IO.File]::ReadAllBytes((Join-Path $root 'PattLuckyLogo.png'))); continue }
+    if ($ctx.Request.HttpMethod -eq 'GET' -and $path -eq '/') { Send-Response $ctx 200 'text/html; charset=utf-8' ([IO.File]::ReadAllBytes((Find-AppFile 'app.html'))); continue }
+    if ($ctx.Request.HttpMethod -eq 'GET' -and $path -eq '/PattLuckyLogo.png') { Send-Response $ctx 200 'image/png' ([IO.File]::ReadAllBytes((Find-AppFile 'PattLuckyLogo.png'))); continue }
     if ($ctx.Request.HttpMethod -eq 'GET' -and $path -eq '/setup-wizard.ps1') { Send-Response $ctx 200 'application/octet-stream' ([IO.File]::ReadAllBytes((Join-Path $root 'setup-wizard.ps1'))); continue }
     if ($ctx.Request.HttpMethod -eq 'GET' -and $path -eq '/download-bundle.zip') {
       Add-Type -AssemblyName System.IO.Compression
       $memory = [IO.MemoryStream]::new(); $archive = [IO.Compression.ZipArchive]::new($memory,[IO.Compression.ZipArchiveMode]::Create,$true)
       try {
-        foreach ($name in @('app.html','launch.ps1','setup-wizard.ps1','PattLuckyCodex.exe','PattLuckyLogo.png','README.md')) {
-          $entry = $archive.CreateEntry($name,[IO.Compression.CompressionLevel]::Optimal); $inputStream = [IO.File]::OpenRead((Join-Path $root $name)); $outputStream = $entry.Open()
+        foreach ($name in @('app.html','launch.ps1','setup-wizard.ps1','PattLuckyCodex.exe','PattLuckyCodex.ico','PattLuckyLogo.png','README.md')) {
+          $entry = $archive.CreateEntry($name,[IO.Compression.CompressionLevel]::Optimal); $inputStream = [IO.File]::OpenRead((Find-AppFile $name)); $outputStream = $entry.Open()
           try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose(); $inputStream.Dispose() }
         }
       } finally { $archive.Dispose() }

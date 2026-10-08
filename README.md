@@ -1,22 +1,35 @@
 # PattLucky Codex Ver 1.0.0.
 
-PattLucky Codex installs as a lightweight Windows desktop app. It opens in an app-style Microsoft Edge window, while a hidden local PowerShell service connects the interface to Ollama. Ollama is still required for local AI responses; Microsoft Edge is required to display the app.
+PattLucky Codex is a lightweight Windows desktop chat app for local AI models. Its main interface is a native Windows Forms window; it does not open or require the Microsoft Edge browser. A small local PowerShell service connects the app to Ollama.
+
+## Project layout
+
+- `src/` — native Windows app source
+- `ui/` — optional browser preview interface
+- `Assets/` — app logo and icon
+- `dist/` — compiled app and downloadable installer bundle
+- `build.ps1`, `launch.ps1`, `setup-wizard.ps1` — build, local service, and installer scripts
 
 ## Install
 
-1. Run PattLucky Codex and select **Download app bundle (.zip)**, or use the ZIP in the project folder.
-2. Extract the ZIP to a folder.
-3. Run `setup-wizard.ps1` and select **Install & launch**.
-4. Use the new desktop shortcut to open PattLucky Codex.
+1. Extract `dist/PattLuckyCodex-1.0.0.zip` from the project, or download the bundle from a release.
+2. Run `setup-wizard.ps1` and choose **Install & launch**.
+3. Open PattLucky Codex from the desktop shortcut.
 
-Install and start [Ollama for Windows](https://ollama.com/download), then choose an agent in PattLucky Codex and download its model. Model files are free to download; your computer supplies the storage, RAM, and processing power. The first model download needs internet.
+The app requires Windows PowerShell 5.1, .NET Framework 4.x, and [Ollama for Windows](https://ollama.com/download). Install and start Ollama, choose an agent, and download its model. The first model download needs internet. After downloading, model inference and chat run on your computer without API keys or per-message fees.
 
 ## Local agents
 
-- Essays & documents: `gemma4:12b` (about 7.7–8 GB)
+- Essays and documents: `gemma4:12b` (about 7.7–8 GB)
 - Coding: `qwen3-coder:30b` (about 19 GB)
 - Creative writing: `qwen3.5:9b` (about 6.6–7.6 GB)
 
-Each model downloads only when selected. All three take roughly 34–35 GB of storage. The app does not require API keys or charge per message. Chat history is stored in the browser profile used by the desktop app and can be exported from the sidebar.
+Each model downloads only when selected. All three use roughly 34–35 GB of storage. Chat history is saved locally under `%LOCALAPPDATA%\PattLucky Codex\chats.json` and can be exported from the app.
 
-For a browser preview instead, run `launch.ps1` from PowerShell. The app is served at `http://127.0.0.1:43771`.
+## Build from source
+
+Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1` from the project folder. The script compiles `src/PattLuckyCodex.cs` and writes the app and `PattLuckyCodex-1.0.0.zip` into `dist/`. The installer archive is flattened so the setup wizard can install it directly.
+
+To preview the desktop app from the terminal after building, run `.\dist\PattLuckyCodex.exe` from the project folder.
+
+For an optional browser preview, run `launch.ps1` in PowerShell. That preview uses your default browser; the installed desktop app does not need a browser.
