@@ -1,4 +1,4 @@
-# PattGPT Codex Ver 2.0.0. portable setup wizard
+# PattGPT Codex Ver 2.0.4. portable setup wizard
 $ErrorActionPreference = 'Stop'
 $source = Split-Path -Parent $MyInvocation.MyCommand.Path
 function Find-PackageFile([string]$name) {
@@ -9,7 +9,7 @@ Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.Application]::EnableVisualStyles()
 $form = New-Object Windows.Forms.Form; $form.Text='PattGPT Codex · Setup Wizard'; $form.Size='500,300'; $form.StartPosition='CenterScreen'; $form.FormBorderStyle='FixedDialog'; $form.MaximizeBox=$false
 $title=New-Object Windows.Forms.Label; $title.Text='PattGPT Codex'; $title.Font=New-Object Drawing.Font('Segoe UI',18,[Drawing.FontStyle]::Bold); $title.Location='24,20'; $title.Size='420,34'; $form.Controls.Add($title)
-$appVersion='2.0.0'; try { $versionInfo=[Diagnostics.FileVersionInfo]::GetVersionInfo((Find-PackageFile 'PattGPTCodex.exe')); if($versionInfo.FileVersion){$appVersion=([version]$versionInfo.FileVersion).ToString(3)} } catch {}
+$appVersion='2.0.4'; try { $versionInfo=[Diagnostics.FileVersionInfo]::GetVersionInfo((Find-PackageFile 'PattGPTCodex.exe')); if($versionInfo.FileVersion){$appVersion=([version]$versionInfo.FileVersion).ToString(3)} } catch {}
 $desc=New-Object Windows.Forms.Label; $desc.Text="Ver $appVersion  ·  Lightweight native Windows desktop app`r`nRequires Ollama for local AI models. No browser required."; $desc.Location='26,62'; $desc.Size='430,48'; $form.Controls.Add($desc)
 $choose=New-Object Windows.Forms.Button; $choose.Text='Choose install folder'; $choose.Location='26,126'; $choose.Size='150,34'; $form.Controls.Add($choose)
 $ollama=New-Object Windows.Forms.Button; $ollama.Text='Get Ollama (required)'; $ollama.Location='26,168'; $ollama.Size='170,34'; $form.Controls.Add($ollama)

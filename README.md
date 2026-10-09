@@ -27,7 +27,7 @@ The app requires Windows PowerShell 5.1 and .NET Framework 4.x. Open **Models** 
 
 ## Local photo and video generation
 
-Choose **Photo & video creator** for help writing prompts, shot lists, and visual direction with the local `qwen3.5:9b` model. Open **Media Studio** in the native Windows app to render actual images or videos through [ComfyUI](https://github.com/Comfy-Org/ComfyUI), an open-source tool that runs on your computer. PattGPT Codex does not send prompts to a hosted provider, require an API key, or charge per generation. The optional browser preview remains chat-only.
+Choose **Photo & video creator (BETA in img gen)** for help writing prompts, shot lists, and visual direction with the local `qwen3.5:9b` model. Open **Media Studio · BETA** in the native Windows app to render actual images or videos through [ComfyUI](https://github.com/Comfy-Org/ComfyUI), an open-source tool that runs on your computer. Image generation is beta. PattGPT Codex does not send prompts to a hosted provider, require an API key, or charge per generation. The optional browser preview remains chat-only.
 
 ComfyUI and its generation models are installed separately and can require substantial disk space and a supported GPU; model downloads may use internet bandwidth. Install ComfyUI and the image or video models you choose, start it at `http://127.0.0.1:8188`, then export a workflow in ComfyUI's **API format** and load that JSON file in Media Studio. Select the positive prompt input, enter a prompt, and choose **Generate locally**. Outputs are saved under `%LOCALAPPDATA%\PattGPT Codex\Media\Images` or `Videos`. The workflow determines the model, resolution, and output format; ComfyUI and model licenses apply. Media Studio accepts loopback addresses only and will not connect to hosted providers. Only load workflows and custom nodes you trust.
 
@@ -41,7 +41,7 @@ At startup, the installed version and GitHub update status appear beside each ot
 
 ## Build from source
 
-Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1` from the project folder. The script compiles `src/PattLuckyCodex.cs` with the version derived from the Git commit count and writes the app and versioned ZIP bundle into `dist/`. For a fixed release build, pass `-VersionOverride 2.0.3`. The installer archive is flattened so the setup wizard can install it directly.
+Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1` from the project folder. The script compiles `src/PattLuckyCodex.cs` with the version derived from the Git commit count and writes the app and versioned ZIP bundle into `dist/`. For a fixed release build, pass `-VersionOverride 2.0.4`. The installer archive is flattened so the setup wizard can install it directly.
 
 To preview the desktop app from the terminal after building, run `.\dist\PattGPTCodex.exe` from the project folder.
 

@@ -20,8 +20,8 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyDescription("Local AI, photo, and video creation workspace")]
 [assembly: AssemblyCompany("PattLucky")]
 [assembly: AssemblyProduct("PattGPT Codex")]
-[assembly: AssemblyVersion("2.0.0.0")]
-[assembly: AssemblyFileVersion("2.0.0.0")]
+[assembly: AssemblyVersion("2.0.4.0")]
+[assembly: AssemblyFileVersion("2.0.4.0")]
 
 internal static class PattLuckyCodex
 {
@@ -33,7 +33,7 @@ internal static class PattLuckyCodex
         new AgentInfo("writer", "Essays & documents", "gemma4:12b", "About 7.7–8 GB", "Draft and polish essays, reports, and documents."),
         new AgentInfo("coding", "Coding", "qwen3-coder:30b", "About 19 GB", "Design, understand, debug, and write software."),
         new AgentInfo("creative", "Creative writing", "qwen3.5:9b", "About 6.6–7.6 GB", "Create stories, scenes, characters, and fresh ideas."),
-        new AgentInfo("media", "Photo & video creator", "qwen3.5:9b", "About 6.6–7.6 GB", "Develop image and video prompts, storyboards, and visual direction."),
+        new AgentInfo("media", "Photo & video creator (BETA in img gen)", "qwen3.5:9b", "About 6.6–7.6 GB", "Develop image and video prompts, storyboards, and visual direction."),
         new AgentInfo("lite", "Lite chat", "qwen3.5:0.8b", "About 1.2 GB", "Quick everyday chat with a small, fast local model.")
     };
     private static readonly Color Lime = Color.FromArgb(163, 230, 53);
@@ -102,7 +102,7 @@ internal static class PattLuckyCodex
     }
     private static string DataDirectory { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PattGPT Codex"); } }
     private static string ChatPath { get { return Path.Combine(DataDirectory, "chats.json"); } }
-    private static string CurrentVersion { get { Version version = Assembly.GetExecutingAssembly().GetName().Version; return version == null ? "2.0.0" : version.ToString(3); } }
+    private static string CurrentVersion { get { Version version = Assembly.GetExecutingAssembly().GetName().Version; return version == null ? "2.0.4" : version.ToString(3); } }
 
     [STAThread]
     private static int Main()
@@ -226,7 +226,7 @@ internal static class PattLuckyCodex
         activeModelIcon = new AgentMarkLabel(); activeModelIcon.TextAlign = ContentAlignment.MiddleCenter; activeModelIcon.Font = new Font("Segoe UI", 7.5f, FontStyle.Bold); activeModelIcon.SetBounds(4, 52, 19, 19); brand.Controls.Add(activeModelIcon);
         activeModelLabel = new Label(); activeModelLabel.TextAlign = ContentAlignment.MiddleLeft; activeModelLabel.AutoEllipsis = true; activeModelLabel.Font = new Font("Segoe UI", 8, FontStyle.Bold); activeModelLabel.Padding = new Padding(25, 0, 2, 0); activeModelLabel.SetBounds(3, 51, 230, 21); brand.Controls.Add(activeModelLabel); activeModelIcon.BringToFront(); stack.Controls.Add(brand, 0, 0);
         Button newChat = MakeButton("＋   New chat", true); newChat.Dock = DockStyle.Fill; newChat.Click += delegate { NewChat(); RefreshHistory(); RefreshMessages(); UpdateMonitor(); }; stack.Controls.Add(newChat, 0, 1);
-        Button mediaStudio = MakeButton("▣   Media Studio", false); mediaStudio.Dock = DockStyle.Fill; mediaStudio.Click += delegate { OpenMediaStudio(); }; stack.Controls.Add(mediaStudio, 0, 2);
+        Button mediaStudio = MakeButton("▣   Media Studio · BETA", false); mediaStudio.Dock = DockStyle.Fill; mediaStudio.Click += delegate { OpenMediaStudio(); }; stack.Controls.Add(mediaStudio, 0, 2);
         Label historyTitle = new Label(); historyTitle.Text = "RECENT CHATS"; historyTitle.ForeColor = muted; historyTitle.Font = new Font("Segoe UI", 8, FontStyle.Bold); historyTitle.TextAlign = ContentAlignment.MiddleLeft; stack.Controls.Add(historyTitle, 0, 3);
         history = new BufferedFlowLayoutPanel(); history.Dock = DockStyle.Fill; history.FlowDirection = FlowDirection.TopDown; history.WrapContents = false; history.AutoScroll = true; history.BackColor = sidebar; stack.Controls.Add(history, 0, 4);
         Panel bottom = new BufferedPanel(); bottom.Dock = DockStyle.Fill; bottom.BackColor = sidebar;
@@ -1073,8 +1073,8 @@ internal static class PattLuckyCodex
 
             Panel heading = new Panel(); heading.Dock = DockStyle.Fill;
             PictureBox brandMark = new PictureBox(); brandMark.Image = logo; brandMark.SizeMode = PictureBoxSizeMode.Zoom; brandMark.SetBounds(0, 7, 42, 42); heading.Controls.Add(brandMark);
-            Label title = new Label(); title.Text = "MEDIA STUDIO"; title.Font = new Font("Segoe UI", 12, FontStyle.Bold); title.ForeColor = Color.FromArgb(242, 156, 72); title.SetBounds(54, 5, 260, 24); heading.Controls.Add(title);
-            Label subtitle = new Label(); subtitle.Text = "Local photo and video generation · Open-source ComfyUI"; subtitle.ForeColor = muted; subtitle.SetBounds(54, 30, 520, 20); heading.Controls.Add(subtitle); layout.Controls.Add(heading, 0, 0);
+            Label title = new Label(); title.Text = "MEDIA STUDIO · BETA"; title.Font = new Font("Segoe UI", 12, FontStyle.Bold); title.ForeColor = Color.FromArgb(242, 156, 72); title.SetBounds(54, 5, 280, 24); heading.Controls.Add(title);
+            Label subtitle = new Label(); subtitle.Text = "Image generation is in beta · Open-source ComfyUI"; subtitle.ForeColor = muted; subtitle.SetBounds(54, 30, 520, 20); heading.Controls.Add(subtitle); layout.Controls.Add(heading, 0, 0);
 
             FlowLayoutPanel connection = new FlowLayoutPanel(); connection.Dock = DockStyle.Fill; connection.WrapContents = false; connection.Padding = new Padding(0, 4, 0, 0);
             mediaKind.DropDownStyle = ComboBoxStyle.DropDownList; mediaKind.Width = 105; mediaKind.Items.AddRange(new object[] { "Image", "Video" }); mediaKind.SelectedIndex = 0; mediaKind.Margin = new Padding(0, 0, 8, 0); connection.Controls.Add(mediaKind);
