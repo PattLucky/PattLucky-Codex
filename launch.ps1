@@ -8,6 +8,8 @@ function Find-AppFile([string]$name) {
 $listener = [System.Net.HttpListener]::new()
 $listener.Prefixes.Add('http://127.0.0.1:43771/')
 $script:PullJobs = @{}
+$script:ManagedOllamaProcessIds = [System.Collections.Generic.List[int]]::new()
+$script:ManagedOllamaProcessIdSet = [System.Collections.Generic.HashSet[int]]::new()
 $script:Agents = @{
   writer = @{model='gemma4:12b';system='You are PattLucky Essay & Document Writer. Help plan, draft, edit, and polish essays and documents. Use clear structure and natural prose. Preserve the user provided meaning, distinguish facts from opinions, and flag claims that need sources instead of inventing citations. Write polished, direct answers with natural wording. Lead with the useful answer; use short headings and bullets for longer replies, and use **bold** or *italics* sparingly to emphasize key ideas. Avoid filler, repetitive openings, and awkward phrasing.'}
   coding = @{model='qwen3-coder:30b';system='You are PattLucky Coding Agent. Help design, understand, debug, and write software. Give accurate code with brief explanations, ask for missing context when it blocks progress, and never claim that code was run unless it was. Write polished, direct answers with natural wording. Lead with the useful answer; use short headings and bullets for longer replies, and use **bold** or *italics* sparingly to emphasize key ideas. Avoid filler, repetitive openings, and awkward phrasing.'}
@@ -23,6 +25,37 @@ function Find-OllamaExecutable {
     if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) { return $candidate }
   }
   return $null
+}
+function Register-OllamaProcessTree {
+  try { $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop) } catch { return }
+  $pending = [System.Collections.Generic.Queue[int]]::new()
+  foreach ($process in $processes) {
+    if ($process.Name -match '^ollama(?: app|_.*)?\.exe$') {
+      $processId = [int]$process.ProcessId
+      if ($script:ManagedOllamaProcessIdSet.Add($processId)) { $script:ManagedOllamaProcessIds.Add($processId); $pending.Enqueue($processId) }
+    }
+  }
+  while ($pending.Count -gt 0) {
+    $parentId = $pending.Dequeue()
+    foreach ($process in $processes) {
+      $processId = [int]$process.ProcessId
+      if ([int]$process.ParentProcessId -eq $parentId -and $script:ManagedOllamaProcessIdSet.Add($processId)) {
+        $script:ManagedOllamaProcessIds.Add($processId); $pending.Enqueue($processId)
+      }
+    }
+  }
+}
+function Stop-ManagedOllamaProcesses {
+  Register-OllamaProcessTree
+  $processIds = $script:ManagedOllamaProcessIds.ToArray()
+  [Array]::Reverse($processIds)
+  foreach ($processId in $processIds) {
+    try {
+      $process = Get-Process -Id $processId -ErrorAction Stop
+      if ($process.ProcessName -like 'ollama*') { Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue }
+    } catch {}
+  }
+  $script:ManagedOllamaProcessIds.Clear(); $script:ManagedOllamaProcessIdSet.Clear()
 }
 try { $listener.Start() } catch { Write-Host 'PattGPT Codex could not start its local server. Close any other copy and try again.' -ForegroundColor Red; Read-Host 'Press Enter to close'; exit 1 }
 if (-not $AppMode) { Start-Process 'http://127.0.0.1:43771/' }
@@ -71,21 +104,22 @@ while ($listener.IsListening) {
       $bundle = $memory.ToArray(); Send-Response $ctx 200 'application/zip' $bundle; $memory.Dispose(); continue
     }
     if ($ctx.Request.HttpMethod -eq 'GET' -and $path -eq '/api/models') {
-      try { $response = Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 5; Send-Json $ctx 200 @{connected=$true;models=@($response.models|ForEach-Object name)} }
+      try { $response = Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 5; if ($script:ManagedOllamaProcessIds.Count -eq 0) { Register-OllamaProcessTree }; Send-Json $ctx 200 @{connected=$true;models=@($response.models|ForEach-Object name)} }
       catch { Send-Json $ctx 200 @{connected=$false;models=@();error='Ollama was not found at http://127.0.0.1:11434. Install and start Ollama, then refresh.'} }
       continue
     }
     if ($ctx.Request.HttpMethod -eq 'GET' -and $path -eq '/api/ollama/check') {
       $ollamaPath = Find-OllamaExecutable; $running = $false
-      try { Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 2 | Out-Null; $running = $true } catch {}
+      try { Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 2 | Out-Null; $running = $true; if ($script:ManagedOllamaProcessIds.Count -eq 0) { Register-OllamaProcessTree } } catch {}
       Send-Json $ctx 200 @{installed=[bool]$ollamaPath;running=$running;path=$ollamaPath}; continue
     }
     if ($ctx.Request.HttpMethod -eq 'POST' -and $path -eq '/api/ollama/start') {
       try {
-        try { Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 2 | Out-Null; Send-Json $ctx 200 @{state='running'}; continue } catch {}
+        try { Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:11434/api/tags' -TimeoutSec 2 | Out-Null; Register-OllamaProcessTree; Send-Json $ctx 200 @{state='running'}; continue } catch {}
         $ollamaPath = Find-OllamaExecutable
         if (!$ollamaPath) { Send-Json $ctx 404 @{error='Ollama is not installed. Install Ollama for Windows, then use Start Ollama here.'}; continue }
-        Start-Process -FilePath $ollamaPath -ArgumentList @('serve') -WindowStyle Hidden | Out-Null
+        $ollamaProcess = Start-Process -FilePath $ollamaPath -ArgumentList @('serve') -WindowStyle Hidden -PassThru
+        if ($ollamaProcess -and $script:ManagedOllamaProcessIdSet.Add([int]$ollamaProcess.Id)) { $script:ManagedOllamaProcessIds.Add([int]$ollamaProcess.Id) }
         Send-Json $ctx 202 @{state='starting'}
       } catch { Send-Json $ctx 500 @{error='Could not start Ollama. Check that it is installed and try again.'} }
       continue
@@ -109,11 +143,13 @@ while ($listener.IsListening) {
         $ollamaPath = Find-OllamaExecutable
         if (!$ollamaPath) { throw 'Ollama is not installed.' }
         $proc = Start-Process -FilePath $ollamaPath -ArgumentList @('pull',$model) -WindowStyle Hidden -PassThru
+        if ($script:ManagedOllamaProcessIdSet.Add([int]$proc.Id)) { $script:ManagedOllamaProcessIds.Add([int]$proc.Id) }
         $script:PullJobs[$model] = @{Process=$proc}; Send-Json $ctx 202 @{state='downloading';model=$model}
       } catch { Send-Json $ctx 500 @{error=('Ollama could not start downloading {0}: {1}' -f $model,$_.Exception.Message)} }
       continue
     }
     if ($ctx.Request.HttpMethod -eq 'POST' -and $path -eq '/api/chat') {
+      Register-OllamaProcessTree
       $payload = Read-Body $ctx; $agent = [string]$payload.agent
       if (!$script:Agents.ContainsKey($agent)) { Send-Json $ctx 400 @{error='Choose one of the supported local agents.'}; continue }
       $config = $script:Agents[$agent]
@@ -138,4 +174,4 @@ while ($listener.IsListening) {
     if ($ctx) { try { Send-Json $ctx 500 @{error=$_.Exception.Message} } catch {} }
   }
 }
-$listener.Stop(); $listener.Close()
+try { $listener.Stop(); $listener.Close() } finally { Stop-ManagedOllamaProcesses }

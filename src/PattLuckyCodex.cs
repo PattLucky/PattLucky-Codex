@@ -20,8 +20,8 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyDescription("Local AI, photo, and video creation workspace")]
 [assembly: AssemblyCompany("PattLucky")]
 [assembly: AssemblyProduct("PattGPT Codex")]
-[assembly: AssemblyVersion("2.0.4.0")]
-[assembly: AssemblyFileVersion("2.0.4.0")]
+[assembly: AssemblyVersion("2.0.5.0")]
+[assembly: AssemblyFileVersion("2.0.5.0")]
 
 internal static class PattLuckyCodex
 {
@@ -70,9 +70,6 @@ internal static class PattLuckyCodex
     private static long lastWatermarkTick;
     private static ToolTip versionTip;
     private static bool connected, ollamaInstalled, ollamaInstallPending;
-    private static bool busy;
-    private static string thinkingModel;
-    private static readonly Stopwatch responseTimer = new Stopwatch();
     private static DateTime ollamaInstallPendingSince;
     private static int ollamaStatusRequestActive;
     private static int mediaConnectionCheckActive;
@@ -102,7 +99,7 @@ internal static class PattLuckyCodex
     }
     private static string DataDirectory { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PattGPT Codex"); } }
     private static string ChatPath { get { return Path.Combine(DataDirectory, "chats.json"); } }
-    private static string CurrentVersion { get { Version version = Assembly.GetExecutingAssembly().GetName().Version; return version == null ? "2.0.4" : version.ToString(3); } }
+    private static string CurrentVersion { get { Version version = Assembly.GetExecutingAssembly().GetName().Version; return version == null ? "2.0.5" : version.ToString(3); } }
 
     [STAThread]
     private static int Main()
@@ -116,10 +113,19 @@ internal static class PattLuckyCodex
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         DetectTheme();
+        Mutex instanceMutex = null; bool ownsInstanceMutex = false; bool appOpened = false;
         bool ownsServer = false;
         Process server = null;
         try
         {
+            bool createdNew;
+            instanceMutex = new Mutex(true, "Local\\PattLuckyCodex.SingleInstance", out createdNew);
+            ownsInstanceMutex = createdNew;
+            if (!createdNew || IsAnotherAppInstanceRunning())
+            {
+                MessageBox.Show("PattGPT Codex is already running. Switch to the open app window.", "PattGPT Codex", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return 0;
+            }
             if (!WaitForServer(500))
             {
                 ProcessStartInfo info = new ProcessStartInfo("powershell.exe");
@@ -132,7 +138,7 @@ internal static class PattLuckyCodex
                     return 1;
                 }
             }
-            Application.Run(CreateWindow());
+            Form mainWindow = CreateWindow(); appOpened = true; Application.Run(mainWindow);
             return 0;
         }
         catch (Exception ex)
@@ -142,10 +148,40 @@ internal static class PattLuckyCodex
         }
         finally
         {
-            if (ownsServer) StopLocalServer();
+            if (appOpened) StopLocalServer();
             try { if (ownsServer && server != null && !server.HasExited && !server.WaitForExit(5000)) server.Kill(); } catch { }
             if (server != null) server.Dispose();
+            if (appOpened) StopOllamaProcesses();
+            if (instanceMutex != null) { try { if (ownsInstanceMutex) instanceMutex.ReleaseMutex(); } catch { } instanceMutex.Dispose(); }
         }
+    }
+
+    private static void StopOllamaProcesses()
+    {
+        foreach (Process process in Process.GetProcesses())
+        {
+            try
+            {
+                if (!process.ProcessName.StartsWith("ollama", StringComparison.OrdinalIgnoreCase)) continue;
+                process.Kill(); process.WaitForExit(2000);
+            }
+            catch { }
+            finally { process.Dispose(); }
+        }
+    }
+
+    private static bool IsAnotherAppInstanceRunning()
+    {
+        int currentProcessId = Process.GetCurrentProcess().Id;
+        foreach (string processName in new string[] { "PattGPTCodex", "PattLuckyCodex" })
+        {
+            foreach (Process process in Process.GetProcessesByName(processName))
+            {
+                try { if (process.Id != currentProcessId) return true; }
+                finally { process.Dispose(); }
+            }
+        }
+        return false;
     }
 
     private static void DetectTheme()
@@ -285,7 +321,7 @@ internal static class PattLuckyCodex
 
     private static void NewChat()
     {
-        current = new ChatRecord(); current.Id = Guid.NewGuid().ToString("N"); current.Title = "New chat"; current.Agent = selected; current.Messages = new List<MessageRecord>(); chats.Insert(0, current); SaveChats();
+        current = new ChatRecord(); current.Id = Guid.NewGuid().ToString("N"); current.Title = "New chat"; current.Agent = selected; current.Messages = new List<MessageRecord>(); chats.Insert(0, current); SaveChats(); RefreshActiveChatState();
     }
 
     private static void RefreshHistory()
@@ -295,7 +331,8 @@ internal static class PattLuckyCodex
         {
             ChatRecord item = chat; int rowWidth = Math.Max(150, history.ClientSize.Width - 28);
             Panel row = new Panel(); row.Width = rowWidth; row.Height = 37; row.Margin = new Padding(0, 0, 0, 5); row.BackColor = sidebar;
-            Button open = MakeButton(item.Title, false); open.SetBounds(0, 0, rowWidth - 72, 37); open.TextAlign = ContentAlignment.MiddleLeft; open.Padding = new Padding(11, 0, 8, 0); open.BackColor = item == current ? panel : sidebar;
+            bool itemBusy = busyChatIds.Contains(item.Id);
+            Button open = MakeButton((itemBusy ? "◌  " : "") + item.Title, false); open.SetBounds(0, 0, rowWidth - 72, 37); open.TextAlign = ContentAlignment.MiddleLeft; open.Padding = new Padding(11, 0, 8, 0); open.BackColor = item == current ? panel : sidebar; open.AccessibleDescription = itemBusy ? "Response in progress. Open " + item.Title : "Open " + item.Title;
             open.Click += delegate { current = item; selected = item.Agent; agentPicker.SelectedIndex = AgentIndex(selected); UpdateAgent(); RefreshHistory(); RefreshMessages(); };
             Button rename = MakeButton("✎", false); rename.SetBounds(rowWidth - 68, 0, 32, 37); rename.Padding = Padding.Empty; rename.AccessibleName = "Rename chat"; rename.AccessibleDescription = "Rename “" + item.Title + "”";
             rename.Click += delegate { RenameChat(item); };
@@ -508,8 +545,9 @@ internal static class PattLuckyCodex
     private static void AddTypingIndicator()
     {
         typingIndicator = null;
-        if (!busy || messages == null) return;
-        typingIndicator = new TypingIndicatorPanel();
+        Stopwatch timer;
+        if (current == null || !busyChatIds.Contains(current.Id) || !chatResponseTimers.TryGetValue(current.Id, out timer) || messages == null) return;
+        typingIndicator = new TypingIndicatorPanel(timer);
         typingIndicator.Margin = new Padding(Math.Max(8, messages.ClientSize.Width - messages.Padding.Horizontal - typingIndicator.Width - 8), 2, 8, 4);
         messages.Controls.Add(typingIndicator);
     }
@@ -595,19 +633,24 @@ internal static class PattLuckyCodex
 
     private static void SendMessage()
     {
-        if (busy) return; string text = prompt.Text.Trim(); if (text.Length == 0) return;
-        if (current == null) NewChat(); AgentInfo agent = AgentByKey(selected);
+        string text = prompt.Text.Trim(); if (text.Length == 0) return;
+        if (current == null) NewChat();
+        ChatRecord targetChat = current;
+        if (busyChatIds.Contains(targetChat.Id)) return;
+        if (!connected) { SetHint("Starting Ollama for this chat. Send again when it is ready."); StartOllamaFromGui(); return; }
+        AgentInfo agent = AgentByKey(selected);
         if (!availableModels.Contains(agent.Model)) { SetHint("Install " + agent.Model + " first using the Get model button."); return; }
         if (current.Messages.Count == 0) current.Title = text.Length > 42 ? text.Substring(0, 42) : text;
-        current.Agent = selected; MessageRecord user = new MessageRecord(); user.Role = "user"; user.Content = text; user.Agent = selected; user.Time = DateTime.UtcNow.Ticks; current.Messages.Add(user); prompt.Clear(); SaveChats(); RefreshHistory();
-        ChatRecord targetChat = current; string targetAgent = selected;
-        busy = true; thinkingModel = agent.Model; responseTimer.Restart(); sendButton.Enabled = false; hintLabel.Text = "Thinking locally with " + agent.Model + " · " + FormatDuration(0);
+        current.Agent = selected; MessageRecord user = new MessageRecord(); user.Role = "user"; user.Content = text; user.Agent = selected; user.Time = DateTime.UtcNow.Ticks; current.Messages.Add(user); prompt.Clear(); SaveChats();
+        string targetAgent = selected;
+        Stopwatch responseTimer = new Stopwatch(); responseTimer.Start(); busyChatIds.Add(targetChat.Id); chatResponseTimers[targetChat.Id] = responseTimer; chatResponseModels[targetChat.Id] = agent.Model;
+        RefreshActiveChatState(); RefreshHistory();
         if (welcomePanel != null && !welcomePanel.IsDisposed) RefreshMessages();
         else { RemoveConversationTail(); AddMessage(user); AddTypingIndicator(); AddConversationTail(); LayoutMessages(); ScrollMessages(); }
         spinTimer.Start();
+        List<object> transcript = new List<object>(); foreach (MessageRecord message in targetChat.Messages) transcript.Add(new { role = message.Role, content = message.Content });
         ThreadPool.QueueUserWorkItem(delegate {
             try {
-                List<object> transcript = new List<object>(); foreach (MessageRecord m in targetChat.Messages) transcript.Add(new { role = m.Role, content = m.Content });
                 Dictionary<string, object> payload = new Dictionary<string, object>(); payload["agent"] = targetAgent; payload["messages"] = transcript;
                 Dictionary<string, object> result = PostJson("api/chat", payload, 1800000);
                 string content = result.ContainsKey("content") ? Convert.ToString(result["content"]) : "";
@@ -619,11 +662,11 @@ internal static class PattLuckyCodex
 
     private static void FinishResponse(ChatRecord target, string targetAgent, string content, string error, Dictionary<string, object> result)
     {
-        if (spinTimer != null) spinTimer.Stop();
-        responseTimer.Stop();
-        MessageRecord reply = new MessageRecord(); reply.Role = "assistant"; reply.Agent = targetAgent; reply.Time = DateTime.UtcNow.Ticks; reply.DurationMilliseconds = responseTimer.ElapsedMilliseconds; reply.Content = error == null ? (String.IsNullOrEmpty(content) ? "(The model returned an empty response.)" : content) : "Could not get a local response.\r\n\r\n" + error; target.Messages.Add(reply);
+        Stopwatch responseTimer;
+        if (chatResponseTimers.TryGetValue(target.Id, out responseTimer)) responseTimer.Stop();
+        MessageRecord reply = new MessageRecord(); reply.Role = "assistant"; reply.Agent = targetAgent; reply.Time = DateTime.UtcNow.Ticks; reply.DurationMilliseconds = responseTimer == null ? 0 : responseTimer.ElapsedMilliseconds; reply.Content = error == null ? (String.IsNullOrEmpty(content) ? "(The model returned an empty response.)" : content) : "Could not get a local response.\r\n\r\n" + error; target.Messages.Add(reply);
         if (result != null && result.ContainsKey("eval_count") && result.ContainsKey("eval_duration")) { double count = Convert.ToDouble(result["eval_count"]); double duration = Convert.ToDouble(result["eval_duration"]); if (duration > 0) speedLabel.Text = "Model speed: " + (count / (duration / 1000000000.0)).ToString("0.0") + " tokens/sec"; }
-        busy = false; sendButton.Enabled = true; hintLabel.Text = "Runs on your computer · First model download needs internet"; SaveChats(); RefreshHistory();
+        busyChatIds.Remove(target.Id); chatResponseTimers.Remove(target.Id); chatResponseModels.Remove(target.Id); RefreshActiveChatState(); SaveChats(); RefreshHistory();
         if (current == target) { RemoveTypingIndicator(); RemoveConversationTail(); AddMessage(reply); AddConversationTail(); LayoutMessages(); ScrollMessages(); }
         else if (current != null) RefreshMessages();
         if (messages != null) messages.Invalidate(false); prompt.Focus();
@@ -641,7 +684,7 @@ internal static class PattLuckyCodex
 
     private static void PullAgentModel(AgentInfo agent)
     {
-        if (!connected) { SetHint("Start Ollama from Models, then download the model."); UpdateModelManager(); return; }
+        if (!connected) { SetHint("Starting Ollama for the selected model…"); StartOllamaFromGui(); UpdateModelManager(); return; }
         if (availableModels.Contains(agent.Model)) { SetHint(agent.Model + " is ready to use."); UpdateModelManager(); return; }
         if (downloadingModels.Contains(agent.Model)) { SetHint(agent.Model + " is already downloading."); return; }
         downloadingModels.Add(agent.Model); modelDownloadProgress[agent.Model] = "Preparing…"; modelLayerBytes[agent.Model] = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase); UpdateModelManager(); SetHint("Starting download for " + agent.Model + "…");
@@ -708,7 +751,7 @@ internal static class PattLuckyCodex
             Button install = MakeButton("Download", false); install.Tag = item; install.SetBounds(483, y + 5, 143, 36); install.Click += delegate { PullAgentModel(item); }; dialog.Controls.Add(install); modelManagerButtons.Add(install);
             y += 67;
         }
-        Label note = new Label(); note.Text = "Models are stored locally by Ollama. Downloads need internet and may require several GB of free space."; note.ForeColor = muted; note.SetBounds(26, 365, 600, 22); dialog.Controls.Add(note);
+        Label note = new Label(); note.Text = "Ollama starts when needed and closes with PattGPT. Other apps using it disconnect."; note.ForeColor = muted; note.SetBounds(26, 365, 600, 22); dialog.Controls.Add(note);
         dialog.FormClosed += delegate { if (modelManagerTimer != null) modelManagerTimer.Stop(); modelManagerDialog = null; modelManagerStatus = null; ollamaStartButton = null; ollamaInstallButton = null; modelManagerButtons.Clear(); };
         modelManagerTimer = new System.Windows.Forms.Timer(); modelManagerTimer.Interval = 2000; modelManagerTimer.Tick += delegate { if (ollamaInstallPending && DateTime.UtcNow - ollamaInstallPendingSince > TimeSpan.FromMinutes(3)) ollamaInstallPending = false; UpdateModelManager(); if (!ollamaInstalled) RefreshOllamaInstallStatus(); }; modelManagerTimer.Start();
         UpdateModelManager(); RefreshOllamaInstallStatus(); dialog.Show(form);
@@ -832,6 +875,25 @@ internal static class PattLuckyCodex
             activeModelIcon.Text = a.Key == "writer" ? "W" : (a.Key == "coding" ? "C" : (a.Key == "creative" ? "R" : (a.Key == "media" ? "M" : "L"))); activeModelIcon.BackColor = sidebar; activeModelIcon.ForeColor = sidebar; activeModelIcon.Invalidate();
         }
         if (getModelButton != null) { getModelButton.Enabled = true; getModelButton.Text = "Models"; }
+        RefreshActiveChatState();
+    }
+
+    private static void RefreshActiveChatState()
+    {
+        bool activeBusy = current != null && busyChatIds.Contains(current.Id);
+        if (sendButton != null) sendButton.Enabled = !activeBusy;
+        if (hintLabel != null)
+        {
+            Stopwatch timer; string model;
+            if (activeBusy && chatResponseTimers.TryGetValue(current.Id, out timer) && chatResponseModels.TryGetValue(current.Id, out model))
+                hintLabel.Text = "Thinking locally with " + model + " · " + FormatDuration(timer.ElapsedMilliseconds);
+            else hintLabel.Text = "Runs on your computer · First model download needs internet";
+        }
+        if (spinTimer != null)
+        {
+            if (busyChatIds.Count > 0) spinTimer.Start();
+            else spinTimer.Stop();
+        }
     }
 
     private static Color AgentAccent(string key)
@@ -920,7 +982,11 @@ internal static class PattLuckyCodex
     private static void UpdateMonitor()
     {
         if (runtimeLabel == null) return; long seconds = (Environment.TickCount - sessionStart) / 1000; runtimeLabel.Text = "Open " + (seconds / 60).ToString("00") + ":" + (seconds % 60).ToString("00"); int total = 0; foreach (ChatRecord chat in chats) total += chat.Messages.Count; countsLabel.Text = chats.Count + " chats · " + total + " msgs"; if (speedLabel.Text.Length == 0) speedLabel.Text = "Model speed: waiting for a reply";
-        if (busy && hintLabel != null) hintLabel.Text = "Thinking locally with " + thinkingModel + " · " + FormatDuration(responseTimer.ElapsedMilliseconds);
+        if (current != null && busyChatIds.Contains(current.Id) && hintLabel != null)
+        {
+            Stopwatch timer; string model;
+            if (chatResponseTimers.TryGetValue(current.Id, out timer) && chatResponseModels.TryGetValue(current.Id, out model)) hintLabel.Text = "Thinking locally with " + model + " · " + FormatDuration(timer.ElapsedMilliseconds);
+        }
     }
 
     private static string FormatDuration(long milliseconds)
@@ -1360,8 +1426,10 @@ internal static class PattLuckyCodex
     }
     private sealed class TypingIndicatorPanel : Panel
     {
-        public TypingIndicatorPanel()
+        private readonly Stopwatch responseTimer;
+        public TypingIndicatorPanel(Stopwatch timer)
         {
+            responseTimer = timer;
             Size = new Size(104, 62); BackColor = bg;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true); DoubleBuffered = true;
         }

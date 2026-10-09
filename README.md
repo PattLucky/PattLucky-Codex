@@ -16,7 +16,7 @@ PattGPT Codex is a lightweight Windows desktop chat app for local AI models. Its
 2. Run `setup-wizard.ps1` and choose **Install & launch**.
 3. Open PattGPT Codex from the desktop shortcut.
 
-The app requires Windows PowerShell 5.1 and .NET Framework 4.x. Open **Models** to download and launch the official Ollama installer, start Ollama, and download any of the four agent models. Internet is needed for the initial Ollama and model downloads. Afterward, model inference and chat run on your computer without API keys or per-message fees.
+The app requires Windows PowerShell 5.1 and .NET Framework 4.x. Open **Models** to download the official Ollama installer and download any of the four agent models. Ollama starts only when you send a chat or request a model download; it is not launched just by opening PattGPT Codex. When PattGPT closes, its Ollama server, tray app, and active model downloads are stopped. This also disconnects other apps using Ollama. Only one PattGPT Codex instance can run at a time. Internet is needed for the initial Ollama and model downloads. Afterward, model inference and chat run on your computer without API keys or per-message fees.
 
 ## Local agents
 
@@ -41,7 +41,7 @@ At startup, the installed version and GitHub update status appear beside each ot
 
 ## Build from source
 
-Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1` from the project folder. The script compiles `src/PattLuckyCodex.cs` with the version derived from the Git commit count and writes the app and versioned ZIP bundle into `dist/`. For a fixed release build, pass `-VersionOverride 2.0.4`. The installer archive is flattened so the setup wizard can install it directly.
+Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1` from the project folder. The script compiles `src/PattLuckyCodex.cs` with the version derived from the Git commit count and writes the app and versioned ZIP bundle into `dist/`. For a fixed release build, pass `-VersionOverride 2.0.5`. The installer archive is flattened so the setup wizard can install it directly.
 
 To preview the desktop app from the terminal after building, run `.\dist\PattGPTCodex.exe` from the project folder.
 
