@@ -20,21 +20,30 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyDescription("Local AI, photo, and video creation workspace")]
 [assembly: AssemblyCompany("PattLucky")]
 [assembly: AssemblyProduct("PattGPT Codex")]
-[assembly: AssemblyVersion("2.0.5.0")]
-[assembly: AssemblyFileVersion("2.0.5.0")]
+[assembly: AssemblyVersion("2.0.6.0")]
+[assembly: AssemblyFileVersion("2.0.6.0")]
 
 internal static class PattLuckyCodex
 {
     private const string AppUrl = "http://127.0.0.1:43771/";
+    private const string VisionModelId = "qwen3-vl-8b";
+    private const string DefaultAgentKey = "lite";
     private const string GitHubLatestReleaseApi = "https://api.github.com/repos/PattLucky/PattLucky-Codex/releases/latest";
     private const string GitHubReleasesPage = "https://github.com/PattLucky/PattLucky-Codex/releases/latest";
-    private static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
+    private static readonly JavaScriptSerializer Json = new JavaScriptSerializer() { MaxJsonLength = 40 * 1024 * 1024 };
     private static readonly AgentInfo[] Agents = {
-        new AgentInfo("writer", "Essays & documents", "gemma4:12b", "About 7.7–8 GB", "Draft and polish essays, reports, and documents."),
-        new AgentInfo("coding", "Coding", "qwen3-coder:30b", "About 19 GB", "Design, understand, debug, and write software."),
-        new AgentInfo("creative", "Creative writing", "qwen3.5:9b", "About 6.6–7.6 GB", "Create stories, scenes, characters, and fresh ideas."),
-        new AgentInfo("media", "Photo & video creator (BETA in img gen)", "qwen3.5:9b", "About 6.6–7.6 GB", "Develop image and video prompts, storyboards, and visual direction."),
-        new AgentInfo("lite", "Lite chat", "qwen3.5:0.8b", "About 1.2 GB", "Quick everyday chat with a small, fast local model.")
+        new AgentInfo("lite", "Lite chat · Default", "qwen3-8b", "5.0 GB download · 8 GB RAM recommended", "Quick everyday chat with a capable local model."),
+        new AgentInfo("writer", "Essays & documents", "qwen3-14b", "9.0 GB download · 16 GB RAM recommended", "Draft and polish essays, reports, and documents."),
+        new AgentInfo("coding", "Coding", "qwen3-coder-30b", "18.6 GB download · 32 GB RAM recommended", "Design, understand, debug, and write software."),
+        new AgentInfo("creative", "Creative writing", "qwen3-14b", "9.0 GB download · 16 GB RAM recommended", "Create stories, scenes, characters, and fresh ideas."),
+        new AgentInfo("media", "Photo & video creator (BETA in img gen)", "qwen3-14b", "9.0 GB download · 16 GB RAM recommended", "Develop image and video prompts, storyboards, and visual direction."),
+        new AgentInfo("business", "Business workflows", "qwen3-14b", "9.0 GB download · 16 GB RAM recommended", "Create proposals, meeting records, SOPs, status reports, and decision briefs.")
+    };
+    private static readonly ModelInfo[] Models = {
+        new ModelInfo("qwen3-8b", "Qwen3 8B · Recommended lightweight default", "5.0 GB download · 8 GB RAM recommended"),
+        new ModelInfo("qwen3-14b", "Qwen3 14B · General, writing & creative", "9.0 GB download · 16 GB RAM recommended"),
+        new ModelInfo("qwen3-coder-30b", "Qwen3 Coder 30B · Coding specialist", "18.6 GB download · 32 GB RAM recommended"),
+        new ModelInfo(VisionModelId, "Qwen3-VL 8B · Image understanding", "5.8 GB download · 8 GB RAM recommended")
     };
     private static readonly Color Lime = Color.FromArgb(163, 230, 53);
     private static Color bg, panel, sidebar, fg, muted, line, userBubble;
@@ -45,9 +54,13 @@ internal static class PattLuckyCodex
     private static Button statusToggle;
     private static bool statusExpanded;
     private static TextBox prompt;
+    private static Label promptPlaceholder;
+    private static FlowLayoutPanel composerAttachments;
+    private static TableLayoutPanel composerInputLayout;
+    private static ToolTip composerToolTip;
     private static ComboBox agentPicker;
-    private static Label ollamaLabel, runtimeLabel, countsLabel, speedLabel, modelLabel, hintLabel, welcomeStatus;
-    private static Label metricsCompactLabel, metricsDetailLabel, versionLabel;
+    private static Label localAiLabel, runtimeLabel, countsLabel, speedLabel, modelLabel, hintLabel, welcomeStatus;
+    private static Label metricsCompactLabel, metricsDetailLabel, versionLabel, welcomeLifecycleNotice;
     private static Panel welcomePanel, conversationTailSpacer;
     private static TypingIndicatorPanel typingIndicator;
     private static PictureBox welcomeLogo;
@@ -59,19 +72,15 @@ internal static class PattLuckyCodex
     private static Label activeModelLabel, activeModelIcon;
     private static Form modelManagerDialog;
     private static Label modelManagerStatus;
-    private static Button ollamaStartButton, ollamaInstallButton;
-    private static WebClient ollamaInstallerClient;
     private static readonly List<Button> modelManagerButtons = new List<Button>();
-    private static System.Windows.Forms.Timer statusTimer, runtimeTimer, spinTimer, resizeTimer, metricsTimer, watermarkTimer, modelManagerTimer;
+    private static System.Windows.Forms.Timer statusTimer, runtimeTimer, spinTimer, resizeTimer, metricsTimer, modelManagerTimer;
     private static Image logo;
     private static Bitmap watermarkCache;
     private static int spinAngle;
-    private static float watermarkAngle;
-    private static long lastWatermarkTick;
     private static ToolTip versionTip;
-    private static bool connected, ollamaInstalled, ollamaInstallPending;
-    private static DateTime ollamaInstallPendingSince;
-    private static int ollamaStatusRequestActive;
+    private static bool connected;
+    private static bool initializingAgentPicker = true;
+    private static bool agentChoiceMadeThisSession;
     private static int mediaConnectionCheckActive;
     private static readonly HashSet<string> busyChatIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, Stopwatch> chatResponseTimers = new Dictionary<string, Stopwatch>(StringComparer.OrdinalIgnoreCase);
@@ -79,12 +88,12 @@ internal static class PattLuckyCodex
     private static bool storageWriteBlocked;
     private static string startupStorageNotice;
     private static long sessionStart = Environment.TickCount;
-    private static string selected = "writer";
+    private static string selected = DefaultAgentKey;
     private static readonly HashSet<string> availableModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> downloadingModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private static readonly Dictionary<string, string> modelDownloadProgress = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-    private static readonly Dictionary<string, Dictionary<string, long>> modelLayerBytes = new Dictionary<string, Dictionary<string, long>>(StringComparer.OrdinalIgnoreCase);
     private static readonly List<ChatRecord> chats = new List<ChatRecord>();
+    private static readonly List<ChatAttachment> pendingAttachments = new List<ChatAttachment>();
     private static ChatRecord current;
     private static string Root
     {
@@ -99,7 +108,8 @@ internal static class PattLuckyCodex
     }
     private static string DataDirectory { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PattGPT Codex"); } }
     private static string ChatPath { get { return Path.Combine(DataDirectory, "chats.json"); } }
-    private static string CurrentVersion { get { Version version = Assembly.GetExecutingAssembly().GetName().Version; return version == null ? "2.0.5" : version.ToString(3); } }
+    private static string AttachmentDirectory { get { return Path.Combine(DataDirectory, "attachments"); } }
+    private static string CurrentVersion { get { Version version = Assembly.GetExecutingAssembly().GetName().Version; return version == null ? "2.0.6" : version.ToString(3); } }
 
     [STAThread]
     private static int Main()
@@ -151,22 +161,7 @@ internal static class PattLuckyCodex
             if (appOpened) StopLocalServer();
             try { if (ownsServer && server != null && !server.HasExited && !server.WaitForExit(5000)) server.Kill(); } catch { }
             if (server != null) server.Dispose();
-            if (appOpened) StopOllamaProcesses();
             if (instanceMutex != null) { try { if (ownsInstanceMutex) instanceMutex.ReleaseMutex(); } catch { } instanceMutex.Dispose(); }
-        }
-    }
-
-    private static void StopOllamaProcesses()
-    {
-        foreach (Process process in Process.GetProcesses())
-        {
-            try
-            {
-                if (!process.ProcessName.StartsWith("ollama", StringComparison.OrdinalIgnoreCase)) continue;
-                process.Kill(); process.WaitForExit(2000);
-            }
-            catch { }
-            finally { process.Dispose(); }
         }
     }
 
@@ -230,24 +225,18 @@ internal static class PattLuckyCodex
         TableLayoutPanel layout = new TableLayoutPanel(); layout.Dock = DockStyle.Fill; layout.ColumnCount = 2; layout.RowCount = 1;
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 265)); layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); form.Controls.Add(layout);
         layout.Controls.Add(BuildSidebar(), 0, 0); layout.Controls.Add(BuildMain(), 1, 0);
-        LoadChats(); if (chats.Count > 0) current = chats[0]; else NewChat();
-        RefreshHistory(); RefreshMessages(); UpdateAgent();
+        LoadChats(); if (chats.Count > 0) { current = chats[0]; selected = current.Agent; } else NewChat();
+        RefreshHistory(); RefreshMessages(); UpdateAgent(); initializingAgentPicker = false;
         if (!String.IsNullOrEmpty(startupStorageNotice)) SetHint(startupStorageNotice);
         resizeTimer = new System.Windows.Forms.Timer(); resizeTimer.Interval = 90; resizeTimer.Tick += delegate { resizeTimer.Stop(); LayoutWindow(); RebuildWatermarkCache(); };
         form.Resize += delegate { resizeTimer.Stop(); resizeTimer.Start(); };
-        form.Shown += delegate { LayoutWindow(); RebuildWatermarkCache(); UpdateVersionStatus("Checking GitHub…", false); CheckForUpdates(); };
+        form.Shown += delegate { LayoutWindow(); RebuildWatermarkCache(); form.BeginInvoke((MethodInvoker)delegate { if (prompt != null && !prompt.IsDisposed) prompt.Focus(); }); UpdateVersionStatus("Checking GitHub…", false); CheckForUpdates(); };
         form.FormClosing += delegate { SaveChats(); };
         statusTimer = new System.Windows.Forms.Timer(); statusTimer.Interval = 4000; statusTimer.Tick += delegate { RefreshStatus(); }; statusTimer.Start(); RefreshStatus();
         runtimeTimer = new System.Windows.Forms.Timer(); runtimeTimer.Interval = 1000; runtimeTimer.Tick += delegate { UpdateMonitor(); }; runtimeTimer.Start(); UpdateMonitor();
         metricsTimer = new System.Windows.Forms.Timer(); metricsTimer.Interval = 2000; metricsTimer.Tick += delegate { SamplePerformance(); }; metricsTimer.Start(); SamplePerformance();
-        watermarkTimer = new System.Windows.Forms.Timer(); watermarkTimer.Interval = 120; watermarkTimer.Tick += delegate {
-            if (form == null || form.WindowState == FormWindowState.Minimized || messages == null || watermarkCache == null) { lastWatermarkTick = Stopwatch.GetTimestamp(); return; }
-            long now = Stopwatch.GetTimestamp();
-            if (lastWatermarkTick != 0) watermarkAngle = (watermarkAngle + (float)((now - lastWatermarkTick) * (8.0 / 3.0) / Stopwatch.Frequency)) % 360f;
-            lastWatermarkTick = now; messages.Invalidate(false);
-        }; watermarkTimer.Start();
         spinTimer = new System.Windows.Forms.Timer(); spinTimer.Interval = 45; spinTimer.Tick += delegate { spinAngle = (spinAngle + 8) % 360; if (typingIndicator != null && !typingIndicator.IsDisposed) typingIndicator.Invalidate(); };
-        form.FormClosed += delegate { statusTimer.Stop(); runtimeTimer.Stop(); if (metricsTimer != null) metricsTimer.Stop(); if (watermarkTimer != null) watermarkTimer.Stop(); if (modelManagerTimer != null) modelManagerTimer.Stop(); if (spinTimer != null) spinTimer.Stop(); if (resizeTimer != null) resizeTimer.Stop(); if (watermarkCache != null) watermarkCache.Dispose(); if (logo != null) logo.Dispose(); };
+        form.FormClosed += delegate { statusTimer.Stop(); runtimeTimer.Stop(); if (metricsTimer != null) metricsTimer.Stop(); if (modelManagerTimer != null) modelManagerTimer.Stop(); if (spinTimer != null) spinTimer.Stop(); if (resizeTimer != null) resizeTimer.Stop(); if (watermarkCache != null) watermarkCache.Dispose(); if (logo != null) logo.Dispose(); if (composerToolTip != null) composerToolTip.Dispose(); };
         return form;
     }
 
@@ -268,10 +257,10 @@ internal static class PattLuckyCodex
         Panel bottom = new BufferedPanel(); bottom.Dock = DockStyle.Fill; bottom.BackColor = sidebar;
         TableLayoutPanel bottomLayout = new TableLayoutPanel(); bottomLayout.Dock = DockStyle.Fill; bottomLayout.RowCount = 2; bottomLayout.ColumnCount = 1; bottomLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); bottomLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 20)); bottom.Controls.Add(bottomLayout);
         TableLayoutPanel statusArea = new TableLayoutPanel(); statusArea.Dock = DockStyle.Fill; statusArea.BackColor = sidebar; statusArea.ColumnCount = 1; statusArea.RowCount = 2; statusArea.Margin = Padding.Empty; statusArea.Padding = Padding.Empty; statusArea.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); statusArea.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        statusToggle = MakeButton("● OLLAMA CHECKING  ·  STATUS  ›", false); statusToggle.Dock = DockStyle.Fill; statusToggle.FlatAppearance.BorderSize = 0; statusToggle.BackColor = sidebar; statusToggle.Padding = new Padding(4, 0, 4, 0); statusToggle.Font = new Font("Segoe UI", 8, FontStyle.Regular);
+        statusToggle = MakeButton("● LOCAL AI  ·  STATUS  ›", false); statusToggle.Dock = DockStyle.Fill; statusToggle.FlatAppearance.BorderSize = 0; statusToggle.BackColor = sidebar; statusToggle.Padding = new Padding(4, 0, 4, 0); statusToggle.Font = new Font("Segoe UI", 8, FontStyle.Regular);
         statusDetails = new BufferedPanel(); statusDetails.Dock = DockStyle.Fill; statusDetails.Visible = false; statusDetails.Margin = Padding.Empty;
         Panel monitor = new Panel(); monitor.BackColor = panel; monitor.BorderStyle = BorderStyle.FixedSingle; monitor.SetBounds(0, 0, 233, 139); statusDetails.Controls.Add(monitor);
-        ollamaLabel = new Label(); ollamaLabel.Text = "● OLLAMA CHECKING"; ollamaLabel.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold); ollamaLabel.ForeColor = muted; ollamaLabel.SetBounds(10, 5, 210, 18); monitor.Controls.Add(ollamaLabel);
+        localAiLabel = new Label(); localAiLabel.Text = "● LOCAL AI"; localAiLabel.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold); localAiLabel.ForeColor = Color.FromArgb(91, 150, 25); localAiLabel.SetBounds(10, 5, 210, 18); monitor.Controls.Add(localAiLabel);
         runtimeLabel = new Label(); runtimeLabel.ForeColor = muted; runtimeLabel.Font = new Font("Segoe UI", 8); runtimeLabel.SetBounds(10, 27, 95, 16); monitor.Controls.Add(runtimeLabel);
         countsLabel = new Label(); countsLabel.ForeColor = muted; countsLabel.Font = new Font("Segoe UI", 8); countsLabel.SetBounds(106, 27, 118, 16); monitor.Controls.Add(countsLabel);
         speedLabel = new Label(); speedLabel.ForeColor = muted; speedLabel.Font = new Font("Segoe UI", 8); speedLabel.SetBounds(10, 41, 205, 15); monitor.Controls.Add(speedLabel);
@@ -288,29 +277,47 @@ internal static class PattLuckyCodex
     {
         Panel main = new BufferedPanel(); main.Dock = DockStyle.Fill; main.BackColor = bg;
         TableLayoutPanel stack = new TableLayoutPanel(); stack.Dock = DockStyle.Fill; stack.ColumnCount = 1; stack.RowCount = 3;
-        stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 65)); stack.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 125)); main.Controls.Add(stack);
+        stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 65)); stack.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 190)); main.Controls.Add(stack);
         Panel top = new BufferedPanel(); top.Dock = DockStyle.Fill; top.BackColor = panel; top.Padding = new Padding(20, 10, 20, 10); top.Paint += delegate(object s, PaintEventArgs e) { using (Pen p = new Pen(line)) e.Graphics.DrawLine(p, 0, top.Height - 1, top.Width, top.Height - 1); };
         headerPanel = top;
         headerTitle = new Label(); headerTitle.Text = "Chat"; headerTitle.Font = new Font("Segoe UI", 12, FontStyle.Bold); headerTitle.ForeColor = fg; headerTitle.Location = new Point(16, 20); headerTitle.AutoSize = true; top.Controls.Add(headerTitle);
         versionLabel = new Label(); versionLabel.Text = "Checking updates…"; versionLabel.Font = new Font("Segoe UI", 8.5f); versionLabel.ForeColor = muted; versionLabel.TextAlign = ContentAlignment.MiddleRight; versionLabel.AutoEllipsis = true; versionLabel.Cursor = Cursors.Hand; versionLabel.Click += delegate { UpdateVersionStatus("Checking GitHub…", false); CheckForUpdates(); }; top.Controls.Add(versionLabel);
         versionTip = new ToolTip(); versionTip.SetToolTip(versionLabel, "Click to check GitHub releases");
         agentPicker = new ComboBox(); agentPicker.DropDownStyle = ComboBoxStyle.DropDownList; agentPicker.Width = 205; agentPicker.Location = new Point(105, 17); agentPicker.BackColor = panel; agentPicker.ForeColor = fg;
-        foreach (AgentInfo agent in Agents) agentPicker.Items.Add(agent.Name); agentPicker.SelectedIndexChanged += delegate { if (agentPicker.SelectedIndex >= 0) { selected = Agents[agentPicker.SelectedIndex].Key; if (current != null) current.Agent = selected; SaveChats(); UpdateAgent(); } }; top.Controls.Add(agentPicker);
+        foreach (AgentInfo agent in Agents) agentPicker.Items.Add(agent.Name); agentPicker.SelectedIndexChanged += delegate { if (agentPicker.SelectedIndex >= 0) { if (!initializingAgentPicker) agentChoiceMadeThisSession = true; selected = Agents[agentPicker.SelectedIndex].Key; if (current != null) current.Agent = selected; SaveChats(); UpdateAgent(); } }; agentPicker.SelectionChangeCommitted += delegate { if (!initializingAgentPicker) agentChoiceMadeThisSession = true; }; top.Controls.Add(agentPicker);
         getModelButton = MakeButton("Models", false); getModelButton.Size = new Size(105, 34); getModelButton.Anchor = AnchorStyles.Top | AnchorStyles.Right; getModelButton.Click += delegate { OpenModelManager(); }; top.Controls.Add(getModelButton);
         modelLabel = new Label(); modelLabel.AutoSize = true; modelLabel.ForeColor = muted; modelLabel.Font = new Font("Segoe UI", 8.5f); top.Controls.Add(modelLabel); stack.Controls.Add(top, 0, 0);
         messages = new BufferedFlowLayoutPanel(); messages.Dock = DockStyle.Fill; messages.FlowDirection = FlowDirection.TopDown; messages.WrapContents = false; messages.AutoScroll = true; messages.Padding = new Padding(18, 18, 18, 18); messages.BackColor = bg;
         // Render the watermark in the messages background pass. The active
         // response indicator is a separate foreground control in the message flow.
         messages.Paint += delegate(object sender, PaintEventArgs e) {
-            if (watermarkCache != null) { System.Drawing.Drawing2D.GraphicsState state = e.Graphics.Save(); e.Graphics.TranslateTransform(messages.ClientSize.Width / 2f, messages.ClientSize.Height / 2f); e.Graphics.RotateTransform(watermarkAngle); e.Graphics.InterpolationMode = InterpolationMode.Bilinear; e.Graphics.DrawImageUnscaled(watermarkCache, -watermarkCache.Width / 2, -watermarkCache.Height / 2); e.Graphics.Restore(state); }
+            if (watermarkCache != null) { System.Drawing.Drawing2D.GraphicsState state = e.Graphics.Save(); e.Graphics.ResetTransform(); e.Graphics.TranslateTransform(messages.ClientSize.Width / 2f, messages.ClientSize.Height / 2f); e.Graphics.InterpolationMode = InterpolationMode.Bilinear; e.Graphics.DrawImageUnscaled(watermarkCache, -watermarkCache.Width / 2, -watermarkCache.Height / 2); e.Graphics.Restore(state); }
         };
+        messages.Scroll += delegate { messages.Invalidate(false); };
         stack.Controls.Add(messages, 0, 1);
         Panel composer = new BufferedPanel(); composer.Dock = DockStyle.Fill; composer.BackColor = panel; composer.Padding = new Padding(20, 10, 20, 12); composer.Paint += delegate(object s, PaintEventArgs e) { using (Pen p = new Pen(line)) e.Graphics.DrawLine(p, 0, 0, composer.Width, 0); };
-        Panel inputBox = new Panel(); inputBox.Dock = DockStyle.Fill; inputBox.BackColor = bg; inputBox.Padding = new Padding(12, 8, 12, 8); inputBox.BorderStyle = BorderStyle.FixedSingle; composer.Controls.Add(inputBox);
-        prompt = new TextBox(); prompt.Multiline = true; prompt.AcceptsReturn = true; prompt.ScrollBars = ScrollBars.Vertical; prompt.BorderStyle = BorderStyle.None; prompt.BackColor = bg; prompt.ForeColor = fg; prompt.Font = new Font("Segoe UI", 10); prompt.Dock = DockStyle.Fill; prompt.KeyDown += delegate(object s, KeyEventArgs e) { if (e.KeyCode == Keys.Enter && !e.Shift) { e.SuppressKeyPress = true; SendMessage(); } }; inputBox.Controls.Add(prompt);
+        RoundedPanel inputBox = new RoundedPanel(); inputBox.CornerRadius = 12; inputBox.BorderColor = line; inputBox.FocusedBorderColor = Lime; inputBox.Dock = DockStyle.Fill; inputBox.BackColor = bg; inputBox.Padding = new Padding(12, 8, 12, 8); inputBox.AllowDrop = true; composer.Controls.Add(inputBox);
+        TableLayoutPanel inputLayout = new TableLayoutPanel(); composerInputLayout = inputLayout; inputLayout.Dock = DockStyle.Fill; inputLayout.ColumnCount = 1; inputLayout.RowCount = 3; inputLayout.Margin = Padding.Empty; inputLayout.Padding = Padding.Empty;
+        inputLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); inputLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 0)); inputLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 38)); inputBox.Controls.Add(inputLayout);
+        prompt = new TextBox(); prompt.Multiline = true; prompt.AcceptsReturn = true; prompt.AcceptsTab = false; prompt.ScrollBars = ScrollBars.Vertical; prompt.BorderStyle = BorderStyle.None; prompt.BackColor = bg; prompt.ForeColor = fg; prompt.Font = new Font("Segoe UI", 10); prompt.Dock = DockStyle.Fill; prompt.AccessibleName = "Message"; prompt.AccessibleDescription = "Type a message. Enter sends it; Shift+Enter adds a new line."; prompt.KeyDown += delegate(object s, KeyEventArgs e) { if (e.KeyCode == Keys.Enter && (e.Control || !e.Shift)) { e.SuppressKeyPress = true; SendMessage(); } }; prompt.AllowDrop = true; inputLayout.Controls.Add(prompt, 0, 0);
+        promptPlaceholder = new Label(); promptPlaceholder.Text = "Message PattGPT Codex…"; promptPlaceholder.Font = new Font("Segoe UI", 10); promptPlaceholder.ForeColor = muted; promptPlaceholder.BackColor = bg; promptPlaceholder.AutoSize = true; promptPlaceholder.Location = new Point(inputBox.Padding.Left + 2, inputBox.Padding.Top + 3); promptPlaceholder.Cursor = Cursors.IBeam; promptPlaceholder.Click += delegate { prompt.Focus(); }; inputBox.Controls.Add(promptPlaceholder); promptPlaceholder.BringToFront();
+        prompt.TextChanged += delegate { UpdatePromptPlaceholder(); };
+        prompt.Enter += delegate { inputBox.IsFocused = true; UpdatePromptPlaceholder(); };
+        prompt.Leave += delegate { inputBox.IsFocused = false; UpdatePromptPlaceholder(); };
+        inputBox.Resize += delegate { if (promptPlaceholder != null) promptPlaceholder.Location = new Point(inputBox.Padding.Left + 2, inputBox.Padding.Top + 3); };
+        composerAttachments = new FlowLayoutPanel(); composerAttachments.Dock = DockStyle.Fill; composerAttachments.WrapContents = false; composerAttachments.AutoScroll = true; composerAttachments.Visible = false; composerAttachments.Margin = Padding.Empty; composerAttachments.Padding = new Padding(0, 2, 0, 0); inputLayout.Controls.Add(composerAttachments, 0, 1);
         sendButton = MakeButton("Send", true); sendButton.Size = new Size(85, 34); sendButton.Dock = DockStyle.Right; sendButton.Margin = new Padding(6, 0, 0, 0); sendButton.Click += delegate { SendMessage(); };
-        Panel inputRow = new Panel(); inputRow.Dock = DockStyle.Bottom; inputRow.Height = 38; inputRow.Padding = new Padding(0, 4, 0, 0); inputRow.Controls.Add(sendButton); inputBox.Controls.Add(inputRow); inputRow.BringToFront();
-        hintLabel = new Label(); hintLabel.Text = "Runs on your computer · First model download needs internet"; hintLabel.Dock = DockStyle.Bottom; hintLabel.Height = 22; hintLabel.ForeColor = muted; hintLabel.Font = new Font("Segoe UI", 8); hintLabel.TextAlign = ContentAlignment.MiddleCenter; composer.Controls.Add(hintLabel); stack.Controls.Add(composer, 0, 2);
+        sendButton.AccessibleDescription = "Send message (Enter)";
+        Button attachButton = MakeButton("＋ Attach", false); attachButton.Size = new Size(100, 34); attachButton.Dock = DockStyle.Left; attachButton.Margin = new Padding(0, 0, 6, 0); attachButton.Click += delegate { ShowAttachmentPicker(); };
+        Button workflowButton = MakeButton("Templates", false); workflowButton.Size = new Size(112, 34); workflowButton.Location = new Point(112, 4); workflowButton.Anchor = AnchorStyles.Left | AnchorStyles.Top; workflowButton.AccessibleDescription = "Insert a business document template";
+        ContextMenuStrip workflowMenu = BuildBusinessWorkflowMenu();
+        workflowButton.ContextMenuStrip = workflowMenu;
+        workflowButton.Click += delegate { workflowMenu.Show(workflowButton, new Point(0, workflowButton.Height)); };
+        Panel inputRow = new Panel(); inputRow.Dock = DockStyle.Fill; inputRow.Padding = new Padding(0, 4, 0, 0); inputRow.Controls.Add(sendButton); inputRow.Controls.Add(attachButton); inputRow.Controls.Add(workflowButton); inputLayout.Controls.Add(inputRow, 0, 2);
+        inputBox.DragEnter += AttachmentDragEnter; inputBox.DragDrop += AttachmentDragDrop; prompt.DragEnter += AttachmentDragEnter; prompt.DragDrop += AttachmentDragDrop;
+        hintLabel = new Label(); hintLabel.Text = "Enter sends · Shift+Enter adds a line · Qwen3 8B is the lightweight default"; hintLabel.Dock = DockStyle.Bottom; hintLabel.Height = 22; hintLabel.ForeColor = muted; hintLabel.Font = new Font("Segoe UI", 8); hintLabel.TextAlign = ContentAlignment.MiddleCenter; composer.Controls.Add(hintLabel); stack.Controls.Add(composer, 0, 2);
+        composerToolTip = new ToolTip(); composerToolTip.SetToolTip(prompt, "Enter sends · Shift+Enter adds a line · Ctrl+Enter sends");
+        composerToolTip.SetToolTip(sendButton, "Send message (Enter)");
         return main;
     }
 
@@ -319,9 +326,172 @@ internal static class PattLuckyCodex
         ModernButton b = new ModernButton(); b.Primary = primary; b.Text = text.Replace("&", "&&"); b.BackColor = primary ? Lime : panel; b.ForeColor = primary ? Color.FromArgb(29, 40, 15) : fg; b.Font = new Font("Segoe UI", 9, primary ? FontStyle.Bold : FontStyle.Regular); b.TextAlign = ContentAlignment.MiddleCenter; b.Padding = new Padding(12, 0, 12, 0); b.Cursor = Cursors.Hand; return b;
     }
 
+    private static void UpdatePromptPlaceholder()
+    {
+        if (promptPlaceholder != null && prompt != null)
+            promptPlaceholder.Visible = prompt.TextLength == 0;
+    }
+
+    private static ContextMenuStrip BuildBusinessWorkflowMenu()
+    {
+        ContextMenuStrip menu = new ContextMenuStrip();
+        AddBusinessWorkflow(menu, "Documents", "Client proposal", "Draft a client-ready proposal with an executive summary, objectives, scope and deliverables, approach, timeline, assumptions and exclusions, pricing placeholders, risks, and next steps.");
+        AddBusinessWorkflow(menu, "Documents", "Standard operating procedure", "Create a practical SOP with purpose, scope, roles, prerequisites, numbered steps, quality and safety controls, exceptions and escalation, records, and a revision placeholder.");
+        AddBusinessWorkflow(menu, "Documents", "Client email", "Draft a concise professional client email. Include a useful subject, purpose, relevant context, clear request or next step, and a courteous close. Keep commitments and dates as placeholders unless provided.");
+        AddBusinessWorkflow(menu, "Meetings & delivery", "Meeting minutes and actions", "Turn the provided notes into meeting minutes with purpose, date and attendees, key discussion, decisions, an action table with owner and due date, and open questions. Mark missing details as [TBD].");
+        AddBusinessWorkflow(menu, "Meetings & delivery", "Project brief", "Create a project brief covering problem, measurable objectives, success criteria, scope and exclusions, deliverables, stakeholders, milestones, dependencies, risks, and decisions needed.");
+        AddBusinessWorkflow(menu, "Meetings & delivery", "Weekly status report", "Create a concise weekly status report with overall RAG status (use [TBD] if evidence is insufficient), progress this period, next-period plan, risks and blockers, decisions needed, and action owners.");
+        AddBusinessWorkflow(menu, "Analysis & decisions", "Executive decision brief", "Prepare an executive brief with the decision required, context, evidence and assumptions, options, trade-offs, recommendation, risks, and immediate next steps. Separate known facts from assumptions.");
+        AddBusinessWorkflow(menu, "Analysis & decisions", "Risk register", "Convert the provided information into a risk register with risk, likelihood, impact, mitigation, owner, trigger, and residual exposure. Do not invent ratings or owners; mark unknown values [TBD].");
+        return menu;
+    }
+
+    private static void AddBusinessWorkflow(ContextMenuStrip menu, string category, string title, string instruction)
+    {
+        ToolStripMenuItem parent = null;
+        foreach (ToolStripItem item in menu.Items)
+        {
+            ToolStripMenuItem existing = item as ToolStripMenuItem;
+            if (existing != null && existing.Text == category) { parent = existing; break; }
+        }
+        if (parent == null) { parent = new ToolStripMenuItem(category); menu.Items.Add(parent); }
+        ToolStripMenuItem workflow = new ToolStripMenuItem(title);
+        workflow.Click += delegate { InsertBusinessWorkflow(title, instruction); };
+        parent.DropDownItems.Add(workflow);
+    }
+
+    private static void InsertBusinessWorkflow(string title, string instruction)
+    {
+        string existingText = prompt == null ? "" : prompt.Text.Trim();
+        selected = "business";
+        if (current != null) current.Agent = selected;
+        if (agentPicker != null) agentPicker.SelectedIndex = AgentIndex(selected);
+        UpdateAgent();
+        prompt.Text = instruction + "\r\n\r\nBusiness context and source details:\r\n" + existingText;
+        prompt.SelectionStart = prompt.TextLength;
+        prompt.Focus();
+        SetHint(title + " template inserted · add your details, then send");
+    }
+
+    private static void ShowAttachmentPicker()
+    {
+        using (OpenFileDialog dialog = new OpenFileDialog())
+        {
+            dialog.Title = "Attach images or text files";
+            dialog.Filter = "Supported attachments|*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.tif;*.tiff;*.txt;*.md;*.csv;*.json;*.xml;*.html;*.css;*.js;*.ts;*.cs;*.ps1;*.py;*.java;*.sql;*.log|Images|*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.tif;*.tiff|Text and code files|*.txt;*.md;*.csv;*.json;*.xml;*.html;*.css;*.js;*.ts;*.cs;*.ps1;*.py;*.java;*.sql;*.log|All files|*.*";
+            dialog.Multiselect = true;
+            if (dialog.ShowDialog(form) == DialogResult.OK) AddAttachmentFiles(dialog.FileNames);
+        }
+    }
+
+    private static void AttachmentDragEnter(object sender, DragEventArgs e)
+    {
+        e.Effect = e.Data != null && e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+    }
+
+    private static void AttachmentDragDrop(object sender, DragEventArgs e)
+    {
+        string[] paths = e.Data == null ? null : e.Data.GetData(DataFormats.FileDrop) as string[];
+        if (paths != null) AddAttachmentFiles(paths);
+    }
+
+    private static void AddAttachmentFiles(string[] paths)
+    {
+        if (paths == null) return;
+        string attachmentError = null;
+        foreach (string source in paths)
+        {
+            try
+            {
+                if (pendingAttachments.Count >= 5) throw new InvalidOperationException("A message can include up to five attachments.");
+                if (String.IsNullOrWhiteSpace(source) || !File.Exists(source)) throw new FileNotFoundException("The selected attachment could not be found.", source);
+                string extension = Path.GetExtension(source).ToLowerInvariant();
+                bool image = IsImageExtension(extension);
+                bool text = IsTextExtension(extension);
+                if (!image && !text) throw new InvalidOperationException("That file type is not supported. Attach an image or a text/code file.");
+                FileInfo info = new FileInfo(source);
+                long maxBytes = image ? 8L * 1024 * 1024 : 32L * 1024;
+                if (info.Length == 0 || info.Length > maxBytes) throw new InvalidOperationException(image ? "Each image must be between 1 byte and 8 MB." : "Each text or code attachment must be between 1 byte and 32 KB.");
+                if (image)
+                {
+                    long imageBytes = info.Length;
+                    foreach (ChatAttachment existing in pendingAttachments) if (IsImageExtension(existing.Extension)) imageBytes += new FileInfo(GetAttachmentPath(existing)).Length;
+                    if (imageBytes > 20L * 1024 * 1024) throw new InvalidOperationException("Images in one message cannot exceed 20 MB combined.");
+                    using (Image validated = Image.FromFile(source)) using (Bitmap copy = new Bitmap(validated)) { }
+                }
+                else
+                {
+                    long textBytes = info.Length;
+                    foreach (ChatAttachment existing in pendingAttachments) if (IsTextExtension(existing.Extension)) textBytes += new FileInfo(GetAttachmentPath(existing)).Length;
+                    if (textBytes > 64L * 1024) throw new InvalidOperationException("Text attachments in one message cannot exceed 64 KB combined.");
+                }
+                string id = Guid.NewGuid().ToString("N");
+                Directory.CreateDirectory(AttachmentDirectory);
+                string destination = Path.Combine(AttachmentDirectory, id + extension);
+                File.Copy(source, destination, false);
+                ChatAttachment attachment = new ChatAttachment(); attachment.Id = id; attachment.Name = Path.GetFileName(source); attachment.Extension = extension;
+                pendingAttachments.Add(attachment);
+            }
+            catch (Exception ex) { attachmentError = "Could not attach " + Path.GetFileName(source) + ": " + ex.Message; break; }
+        }
+        UpdateComposerAttachments();
+        if (attachmentError != null) SetHint(attachmentError);
+        else if (pendingAttachments.Count > 0) SetHint("Attachments are stored locally. Images require a vision-capable model; text files are included as context.");
+    }
+
+    private static bool IsImageExtension(string extension)
+    {
+        return extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".gif" || extension == ".bmp" || extension == ".tif" || extension == ".tiff";
+    }
+
+    private static bool IsTextExtension(string extension)
+    {
+        return extension == ".txt" || extension == ".md" || extension == ".csv" || extension == ".json" || extension == ".xml" || extension == ".html" || extension == ".css" || extension == ".js" || extension == ".ts" || extension == ".cs" || extension == ".ps1" || extension == ".py" || extension == ".java" || extension == ".sql" || extension == ".log";
+    }
+
+    private static string GetAttachmentPath(ChatAttachment attachment)
+    {
+        if (attachment == null || String.IsNullOrEmpty(attachment.Id) || !Regex.IsMatch(attachment.Id, "^[a-fA-F0-9]{32}$") || (!IsImageExtension(attachment.Extension) && !IsTextExtension(attachment.Extension)))
+            throw new InvalidDataException("The saved attachment reference is invalid.");
+        return Path.Combine(AttachmentDirectory, attachment.Id + attachment.Extension);
+    }
+
+    private static void UpdateComposerAttachments()
+    {
+        if (composerAttachments == null || composerAttachments.IsDisposed) return;
+        composerAttachments.SuspendLayout();
+        while (composerAttachments.Controls.Count > 0) { Control old = composerAttachments.Controls[0]; composerAttachments.Controls.RemoveAt(0); old.Dispose(); }
+        foreach (ChatAttachment attachment in pendingAttachments)
+        {
+            ChatAttachment item = attachment;
+            Panel chip = new Panel(); chip.Width = 176; chip.Height = 32; chip.Margin = new Padding(0, 1, 6, 1); chip.BackColor = panel; chip.BorderStyle = BorderStyle.FixedSingle;
+            Label name = new Label(); name.Text = item.Name; name.AutoEllipsis = true; name.ForeColor = fg; name.Font = new Font("Segoe UI", 8); name.SetBounds(7, 5, 137, 20); chip.Controls.Add(name);
+            Button remove = MakeButton("×", false); remove.Font = new Font("Segoe UI", 11, FontStyle.Bold); remove.Padding = Padding.Empty; remove.SetBounds(145, 2, 25, 25); remove.Click += delegate { RemovePendingAttachment(item); }; chip.Controls.Add(remove);
+            composerAttachments.Controls.Add(chip);
+        }
+        composerAttachments.Visible = pendingAttachments.Count > 0;
+        if (composerInputLayout != null && composerInputLayout.RowStyles.Count > 1)
+        {
+            composerInputLayout.RowStyles[1].Height = pendingAttachments.Count > 0 ? 42 : 0;
+            composerInputLayout.PerformLayout();
+        }
+        composerAttachments.ResumeLayout();
+    }
+
+    private static void RemovePendingAttachment(ChatAttachment attachment)
+    {
+        pendingAttachments.Remove(attachment);
+        try { string path = GetAttachmentPath(attachment); if (File.Exists(path)) File.Delete(path); }
+        catch (Exception ex) { SetHint("Could not remove the unused attachment file: " + ex.Message); }
+        UpdateComposerAttachments();
+    }
+
     private static void NewChat()
     {
-        current = new ChatRecord(); current.Id = Guid.NewGuid().ToString("N"); current.Title = "New chat"; current.Agent = selected; current.Messages = new List<MessageRecord>(); chats.Insert(0, current); SaveChats(); RefreshActiveChatState();
+        if (!agentChoiceMadeThisSession) selected = DefaultAgentKey;
+        current = new ChatRecord(); current.Id = Guid.NewGuid().ToString("N"); current.Title = "New chat"; current.Agent = selected; current.Messages = new List<MessageRecord>(); chats.Insert(0, current);
+        if (agentPicker != null && agentPicker.SelectedIndex != AgentIndex(selected)) agentPicker.SelectedIndex = AgentIndex(selected);
+        UpdateAgent(); SaveChats(); RefreshActiveChatState();
     }
 
     private static void RefreshHistory()
@@ -333,7 +503,7 @@ internal static class PattLuckyCodex
             Panel row = new Panel(); row.Width = rowWidth; row.Height = 37; row.Margin = new Padding(0, 0, 0, 5); row.BackColor = sidebar;
             bool itemBusy = busyChatIds.Contains(item.Id);
             Button open = MakeButton((itemBusy ? "◌  " : "") + item.Title, false); open.SetBounds(0, 0, rowWidth - 72, 37); open.TextAlign = ContentAlignment.MiddleLeft; open.Padding = new Padding(11, 0, 8, 0); open.BackColor = item == current ? panel : sidebar; open.AccessibleDescription = itemBusy ? "Response in progress. Open " + item.Title : "Open " + item.Title;
-            open.Click += delegate { current = item; selected = item.Agent; agentPicker.SelectedIndex = AgentIndex(selected); UpdateAgent(); RefreshHistory(); RefreshMessages(); };
+            open.Click += delegate { current = item; selected = item.Agent; agentChoiceMadeThisSession = true; agentPicker.SelectedIndex = AgentIndex(selected); UpdateAgent(); RefreshHistory(); RefreshMessages(); };
             Button rename = MakeButton("✎", false); rename.SetBounds(rowWidth - 68, 0, 32, 37); rename.Padding = Padding.Empty; rename.AccessibleName = "Rename chat"; rename.AccessibleDescription = "Rename “" + item.Title + "”";
             rename.Click += delegate { RenameChat(item); };
             Button delete = MakeButton("×", false); delete.SetBounds(rowWidth - 33, 0, 33, 37); delete.Padding = Padding.Empty; delete.AccessibleName = "Delete chat"; delete.AccessibleDescription = "Delete “" + item.Title + "”";
@@ -408,8 +578,7 @@ internal static class PattLuckyCodex
     private static void RebuildWatermarkCache()
     {
         if (messages == null || logo == null || messages.ClientSize.Width < 1 || messages.ClientSize.Height < 1) return;
-        // Keep enough margin for the watermark's corners during a full rotation,
-        // so the mark never gets clipped by the messages viewport.
+        // Keep the watermark inset so it remains fully visible in the message viewport.
         int size = Math.Max(1, Math.Min(900, (int)(Math.Min(messages.ClientSize.Width, messages.ClientSize.Height) * 0.68f)));
         Bitmap next = new Bitmap(size, size, PixelFormat.Format32bppArgb);
         using (Graphics g = Graphics.FromImage(next))
@@ -435,6 +604,7 @@ internal static class PattLuckyCodex
             if (welcomeLogo != null) welcomeLogo.Left = (available - welcomeLogo.Width) / 2;
             if (welcomeHeading != null) welcomeHeading.SetBounds(8, 104, Math.Max(184, available - 16), 44);
             if (welcomeStatus != null) { welcomeStatus.Width = Math.Max(170, Math.Min(520, available - 30)); welcomeStatus.Left = (available - welcomeStatus.Width) / 2; }
+            if (welcomeLifecycleNotice != null) { welcomeLifecycleNotice.Width = Math.Max(170, Math.Min(520, available - 30)); welcomeLifecycleNotice.Left = (available - welcomeLifecycleNotice.Width) / 2; }
             int cardWidth = Math.Max(170, Math.Min(520, available - 32)); foreach (Control card in welcomeCards) { card.Width = cardWidth; card.Left = (available - cardWidth) / 2; }
         }
         else
@@ -486,17 +656,18 @@ internal static class PattLuckyCodex
         if (showWelcome)
         {
             messages.Padding = new Padding(messages.Padding.Left, 18, messages.Padding.Right, 18);
-            welcomeStatus = null;
+            welcomeStatus = null; welcomeLifecycleNotice = null;
             int availableWidth = Math.Max(200, messages.ClientSize.Width - messages.Padding.Horizontal - 34);
-            Panel welcome = new Panel(); welcomePanel = welcome; welcome.Width = availableWidth; welcome.Height = 199 + Agents.Length * 42; welcome.BackColor = bg;
+            Panel welcome = new Panel(); welcomePanel = welcome; welcome.Width = availableWidth; welcome.Height = 264 + Agents.Length * 42; welcome.BackColor = bg;
             PictureBox image = new PictureBox(); welcomeLogo = image; image.Image = logo; image.SizeMode = PictureBoxSizeMode.Zoom; image.SetBounds((welcome.Width - 88) / 2, 8, 88, 88); welcome.Controls.Add(image);
             Label heading = new Label(); welcomeHeading = heading; heading.Text = "PattGPT Codex, Local AI, Your Workspace."; heading.Font = new Font("Segoe UI", 21, FontStyle.Bold); heading.ForeColor = fg; heading.BackColor = bg; heading.TextAlign = ContentAlignment.MiddleCenter; heading.SetBounds(10, 104, welcome.Width - 20, 44); welcome.Controls.Add(heading);
-            welcomeStatus = new Label(); welcomeStatus.Text = connected ? "Ollama is connected. Choose an agent and install its model to begin." : "Start Ollama, choose an agent, and install its model to begin."; welcomeStatus.Font = new Font("Segoe UI", 10); welcomeStatus.ForeColor = muted; welcomeStatus.BackColor = bg; welcomeStatus.Size = new Size(Math.Max(170, Math.Min(520, welcome.Width - 30)), 44); welcomeStatus.TextAlign = ContentAlignment.MiddleCenter; welcomeStatus.Location = new Point((welcome.Width - welcomeStatus.Width) / 2, 150); welcome.Controls.Add(welcomeStatus);
-            welcomeCards.Clear(); int y = 205; int cardWidth = Math.Max(170, Math.Min(520, welcome.Width - 32)); foreach (AgentInfo a in Agents) { Button b = MakeButton("", false); b.Tag = a.Key; b.Text = WelcomeModelText(a); b.Size = new Size(cardWidth, 36); b.Location = new Point((welcome.Width - cardWidth) / 2, y); b.TextAlign = ContentAlignment.MiddleLeft; b.Click += delegate { selected = a.Key; if (current != null) current.Agent = selected; agentPicker.SelectedIndex = AgentIndex(selected); UpdateAgent(); }; welcome.Controls.Add(b); welcomeCards.Add(b); y += 42; }
+            welcomeStatus = new Label(); welcomeStatus.Text = "Start with Lite chat and its lighter Qwen3 8B model. Download it once in Models."; welcomeStatus.Font = new Font("Segoe UI", 10); welcomeStatus.ForeColor = muted; welcomeStatus.BackColor = bg; welcomeStatus.Size = new Size(Math.Max(170, Math.Min(520, welcome.Width - 30)), 44); welcomeStatus.TextAlign = ContentAlignment.MiddleCenter; welcomeStatus.Location = new Point((welcome.Width - welcomeStatus.Width) / 2, 150); welcome.Controls.Add(welcomeStatus);
+            welcomeLifecycleNotice = new Label(); welcomeLifecycleNotice.Text = "The built-in CPU inference engine and downloaded model files stay on this PC. No Ollama, cloud API, or sign-in is required."; welcomeLifecycleNotice.Font = new Font("Segoe UI", 8.5f); welcomeLifecycleNotice.ForeColor = muted; welcomeLifecycleNotice.BackColor = bg; welcomeLifecycleNotice.Size = new Size(Math.Max(170, Math.Min(520, welcome.Width - 30)), 64); welcomeLifecycleNotice.TextAlign = ContentAlignment.MiddleCenter; welcomeLifecycleNotice.Location = new Point((welcome.Width - welcomeLifecycleNotice.Width) / 2, 194); welcome.Controls.Add(welcomeLifecycleNotice);
+            welcomeCards.Clear(); int y = 264; int cardWidth = Math.Max(170, Math.Min(520, welcome.Width - 32)); foreach (AgentInfo a in Agents) { Button b = MakeButton("", false); b.Tag = a.Key; b.Text = WelcomeModelText(a); b.Size = new Size(cardWidth, 36); b.Location = new Point((welcome.Width - cardWidth) / 2, y); b.TextAlign = ContentAlignment.MiddleLeft; b.Click += delegate { selected = a.Key; agentChoiceMadeThisSession = true; if (current != null) current.Agent = selected; agentPicker.SelectedIndex = AgentIndex(selected); UpdateAgent(); }; welcome.Controls.Add(b); welcomeCards.Add(b); y += 42; }
             welcome.Location = new Point(Math.Max(messages.Padding.Left, (messages.ClientSize.Width - welcome.Width) / 2), Math.Max(messages.Padding.Top, (messages.ClientSize.Height - welcome.Height) / 2));
             messages.Controls.Add(welcome);
         }
-        else { welcomePanel = null; welcomeLogo = null; welcomeHeading = null; welcomeCards.Clear(); welcomeStatus = null; foreach (MessageRecord m in current.Messages) AddMessage(m); AddTypingIndicator(); AddConversationTail(); }
+        else { welcomePanel = null; welcomeLogo = null; welcomeHeading = null; welcomeCards.Clear(); welcomeStatus = null; welcomeLifecycleNotice = null; foreach (MessageRecord m in current.Messages) AddMessage(m); AddTypingIndicator(); AddConversationTail(); }
         messages.ResumeLayout(); LayoutMessages();
         if (showWelcome) messages.AutoScrollPosition = Point.Empty; else ScrollMessages();
     }
@@ -504,7 +675,7 @@ internal static class PattLuckyCodex
     private static void AddMessage(MessageRecord message)
     {
         int width = Math.Max(200, Math.Min(760, messages.ClientSize.Width - messages.Padding.Horizontal - 44));
-        Panel card = new Panel(); card.Tag = message.Role; card.Width = width; card.BackColor = message.Role == "user" ? userBubble : panel; card.Padding = new Padding(15, 10, 15, 10); card.Margin = new Padding(message.Role == "assistant" ? Math.Max(8, messages.ClientSize.Width - messages.Padding.Horizontal - width - 8) : 8, 8, 8, 8);
+        RoundedPanel card = new RoundedPanel(); card.CornerRadius = 12; card.BorderColor = message.Role == "user" ? MixColor(userBubble, Lime, 0.14f) : line; card.Tag = message.Role; card.Width = width; card.BackColor = message.Role == "user" ? userBubble : panel; card.Padding = new Padding(15, 10, 15, 10); card.Margin = new Padding(message.Role == "assistant" ? Math.Max(8, messages.ClientSize.Width - messages.Padding.Horizontal - width - 8) : 8, 8, 8, 8);
         string messageTime = message.Time > 0 ? new DateTime(message.Time, DateTimeKind.Utc).ToLocalTime().ToString("h:mm tt") : "";
         string labelText = message.Role == "assistant" ? AgentByKey(message.Agent).Name + "  ·  " + messageTime : "You" + (messageTime.Length > 0 ? "  ·  " + messageTime : "");
         Label who = new Label(); who.Text = labelText; who.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold); who.ForeColor = muted; who.BackColor = card.BackColor; who.Dock = DockStyle.Top; who.Height = 23; card.Controls.Add(who);
@@ -518,13 +689,58 @@ internal static class PattLuckyCodex
         {
             Label plain = new Label(); plain.Text = message.Content; plain.Font = new Font("Segoe UI", 10); plain.ForeColor = fg; plain.BackColor = card.BackColor; plain.AutoSize = true; plain.MaximumSize = new Size(width - 38, 0); plain.Dock = DockStyle.Top; plain.Padding = new Padding(0, 3, 0, 4); body = plain; bodyHeight = plain.PreferredHeight;
         }
-        card.Controls.Add(body); body.BringToFront(); who.BringToFront();
+        card.Controls.Add(body);
+        int attachmentHeight = 0;
+        if (message.Role == "user" && message.Attachments != null && message.Attachments.Count > 0)
+        {
+            FlowLayoutPanel attachmentStrip = CreateMessageAttachments(message.Attachments, width - 30, card.BackColor);
+            card.Controls.Add(attachmentStrip); attachmentHeight = attachmentStrip.Height;
+        }
+        who.BringToFront();
         int durationHeight = 0;
         if (message.Role == "assistant" && message.DurationMilliseconds > 0)
         {
             Label duration = new Label(); duration.Text = "Thought for " + FormatDuration(message.DurationMilliseconds); duration.Font = new Font("Segoe UI", 8); duration.ForeColor = muted; duration.BackColor = card.BackColor; duration.Dock = DockStyle.Bottom; duration.Height = 18; card.Controls.Add(duration); durationHeight = duration.Height;
         }
-        card.Height = Math.Max(65, bodyHeight + who.Height + durationHeight + 24); messages.Controls.Add(card);
+        card.Height = Math.Max(65, bodyHeight + who.Height + attachmentHeight + durationHeight + 24); messages.Controls.Add(card);
+    }
+
+    private static FlowLayoutPanel CreateMessageAttachments(List<ChatAttachment> attachments, int width, Color backColor)
+    {
+        int itemWidth = 92;
+        int columns = Math.Max(1, width / itemWidth);
+        int rows = (attachments.Count + columns - 1) / columns;
+        FlowLayoutPanel strip = new FlowLayoutPanel(); strip.Width = width; strip.Height = rows * 76; strip.Dock = DockStyle.Top; strip.WrapContents = true; strip.AutoScroll = false; strip.Margin = new Padding(0); strip.Padding = Padding.Empty; strip.BackColor = backColor;
+        foreach (ChatAttachment attachment in attachments)
+        {
+            Panel tile = new Panel(); tile.Width = 86; tile.Height = 72; tile.Margin = new Padding(0, 1, 5, 2); tile.BackColor = backColor;
+            if (attachment != null && IsImageExtension(attachment.Extension))
+            {
+                PictureBox preview = new PictureBox(); preview.SetBounds(2, 0, 82, 52); preview.SizeMode = PictureBoxSizeMode.Zoom; preview.BackColor = MixColor(backColor, fg, 0.04f);
+                try
+                {
+                    using (Image source = Image.FromFile(GetAttachmentPath(attachment))) preview.Image = new Bitmap(source);
+                }
+                catch (IOException) { preview.AccessibleDescription = "Image attachment is missing."; }
+                catch (UnauthorizedAccessException) { preview.AccessibleDescription = "Image attachment cannot be read."; }
+                catch (ArgumentException) { preview.AccessibleDescription = "Image attachment is invalid."; }
+                catch (InvalidDataException) { preview.AccessibleDescription = "Image attachment reference is invalid."; }
+                catch (ExternalException) { preview.AccessibleDescription = "Image preview is unavailable."; }
+                if (preview.Image == null)
+                {
+                    preview.AccessibleName = preview.AccessibleDescription;
+                    Label unavailable = new Label(); unavailable.Text = "No preview"; unavailable.Font = new Font("Segoe UI", 7.5f); unavailable.ForeColor = muted; unavailable.TextAlign = ContentAlignment.MiddleCenter; unavailable.SetBounds(0, 17, 82, 18); preview.Controls.Add(unavailable);
+                }
+                tile.Controls.Add(preview);
+            }
+            else
+            {
+                Label icon = new Label(); icon.Text = "FILE"; icon.Font = new Font("Segoe UI", 9, FontStyle.Bold); icon.ForeColor = Lime; icon.TextAlign = ContentAlignment.MiddleCenter; icon.BackColor = MixColor(backColor, Lime, 0.12f); icon.SetBounds(2, 0, 82, 52); tile.Controls.Add(icon);
+            }
+            Label fileName = new Label(); fileName.Text = attachment == null ? "Invalid attachment" : attachment.Name; fileName.AutoEllipsis = true; fileName.Font = new Font("Segoe UI", 7.5f); fileName.ForeColor = fg; fileName.TextAlign = ContentAlignment.MiddleCenter; fileName.SetBounds(0, 53, 86, 18); tile.Controls.Add(fileName);
+            strip.Controls.Add(tile);
+        }
+        return strip;
     }
 
     private static string WelcomeModelText(AgentInfo agent)
@@ -633,31 +849,143 @@ internal static class PattLuckyCodex
 
     private static void SendMessage()
     {
-        string text = prompt.Text.Trim(); if (text.Length == 0) return;
+        string text = prompt.Text.Trim(); if (text.Length == 0 && pendingAttachments.Count == 0) return;
         if (current == null) NewChat();
         ChatRecord targetChat = current;
         if (busyChatIds.Contains(targetChat.Id)) return;
-        if (!connected) { SetHint("Starting Ollama for this chat. Send again when it is ready."); StartOllamaFromGui(); return; }
         AgentInfo agent = AgentByKey(selected);
-        if (!availableModels.Contains(agent.Model)) { SetHint("Install " + agent.Model + " first using the Get model button."); return; }
-        if (current.Messages.Count == 0) current.Title = text.Length > 42 ? text.Substring(0, 42) : text;
-        current.Agent = selected; MessageRecord user = new MessageRecord(); user.Role = "user"; user.Content = text; user.Agent = selected; user.Time = DateTime.UtcNow.Ticks; current.Messages.Add(user); prompt.Clear(); SaveChats();
-        string targetAgent = selected;
-        Stopwatch responseTimer = new Stopwatch(); responseTimer.Start(); busyChatIds.Add(targetChat.Id); chatResponseTimers[targetChat.Id] = responseTimer; chatResponseModels[targetChat.Id] = agent.Model;
+        string modelId = ChatNeedsVisionModel(targetChat) || pendingAttachments.Exists(delegate(ChatAttachment item) { return IsImageExtension(item.Extension); }) ? VisionModelId : agent.Model;
+        if (!availableModels.Contains(modelId)) { SetHint("Download " + ModelById(modelId).Name + " in Models before chatting with " + (modelId == VisionModelId ? "images." : "this agent.")); OpenModelManager(); return; }
+        if (current.Messages.Count == 0)
+        {
+            string title = text.Length > 0 ? text : pendingAttachments[0].Name;
+            current.Title = title.Length > 42 ? title.Substring(0, 42) : title;
+        }
+        current.Agent = selected; MessageRecord user = new MessageRecord(); user.Role = "user"; user.Content = text; user.Agent = selected; user.Time = DateTime.UtcNow.Ticks;
+        user.Attachments = new List<ChatAttachment>(pendingAttachments); current.Messages.Add(user); pendingAttachments.Clear(); prompt.Clear(); UpdateComposerAttachments(); SaveChats();
+        string targetAgent = selected, targetModel = modelId;
+        Stopwatch responseTimer = new Stopwatch(); responseTimer.Start(); busyChatIds.Add(targetChat.Id); chatResponseTimers[targetChat.Id] = responseTimer; chatResponseModels[targetChat.Id] = modelId;
         RefreshActiveChatState(); RefreshHistory();
         if (welcomePanel != null && !welcomePanel.IsDisposed) RefreshMessages();
         else { RemoveConversationTail(); AddMessage(user); AddTypingIndicator(); AddConversationTail(); LayoutMessages(); ScrollMessages(); }
         spinTimer.Start();
-        List<object> transcript = new List<object>(); foreach (MessageRecord message in targetChat.Messages) transcript.Add(new { role = message.Role, content = message.Content });
         ThreadPool.QueueUserWorkItem(delegate {
             try {
-                Dictionary<string, object> payload = new Dictionary<string, object>(); payload["agent"] = targetAgent; payload["messages"] = transcript;
+                Dictionary<string, object> payload = new Dictionary<string, object>(); payload["agent"] = targetAgent; payload["model"] = targetModel; payload["messages"] = BuildTranscript(targetChat);
                 Dictionary<string, object> result = PostJson("api/chat", payload, 1800000);
                 string content = result.ContainsKey("content") ? Convert.ToString(result["content"]) : "";
                 BeginUpdate(delegate { FinishResponse(targetChat, targetAgent, content, null, result); });
             }
             catch (Exception ex) { BeginUpdate(delegate { FinishResponse(targetChat, targetAgent, null, ex.Message, null); }); }
         });
+    }
+
+    private static List<object> BuildTranscript(ChatRecord chat)
+    {
+        List<object> transcript = new List<object>();
+        int first = Math.Max(0, chat.Messages.Count - 12);
+        Dictionary<int, List<string>> includedImages = new Dictionary<int, List<string>>();
+        long includedImageBytes = 0;
+        for (int i = chat.Messages.Count - 1; i >= first && includedImageBytes < 20L * 1024 * 1024; i--)
+        {
+            MessageRecord message = chat.Messages[i];
+            if (message.Attachments == null) continue;
+            long messageImageBytes = 0;
+            List<string> messageImages = new List<string>();
+            foreach (ChatAttachment attachment in message.Attachments)
+            {
+                if (!IsImageExtension(attachment.Extension)) continue;
+                string path = GetAttachmentPath(attachment);
+                if (!File.Exists(path)) throw new FileNotFoundException("A saved attachment is missing: " + attachment.Name, path);
+                FileInfo imageFile = new FileInfo(path);
+                if (imageFile.Length > 8L * 1024 * 1024) throw new InvalidDataException("A saved image exceeds the 8 MB attachment limit: " + attachment.Name);
+                string mimeType;
+                byte[] imageData = ReadVisionImage(path, attachment.Extension, out mimeType);
+                if (imageData.Length > 8 * 1024 * 1024) throw new InvalidDataException("An image exceeds the 8 MB local vision limit after conversion: " + attachment.Name);
+                messageImageBytes += imageData.Length;
+                messageImages.Add("data:" + mimeType + ";base64," + Convert.ToBase64String(imageData));
+            }
+            if (messageImageBytes > 0 && includedImageBytes + messageImageBytes <= 20L * 1024 * 1024)
+            {
+                includedImages.Add(i, messageImages);
+                includedImageBytes += messageImageBytes;
+            }
+        }
+        for (int i = first; i < chat.Messages.Count; i++)
+        {
+            MessageRecord message = chat.Messages[i];
+            string content = message.Content ?? "";
+            List<string> images = new List<string>();
+            List<string> savedImages;
+            if (includedImages.TryGetValue(i, out savedImages)) images.AddRange(savedImages);
+            if (message.Attachments != null)
+            {
+                foreach (ChatAttachment attachment in message.Attachments)
+                {
+                    string path = GetAttachmentPath(attachment);
+                    if (!File.Exists(path)) throw new FileNotFoundException("A saved attachment is missing: " + attachment.Name, path);
+                    if (IsImageExtension(attachment.Extension))
+                    {
+                        continue;
+                    }
+                    else
+                    {
+                        FileInfo textFile = new FileInfo(path);
+                        if (textFile.Length > 32L * 1024) throw new InvalidDataException("A saved text attachment exceeds the 32 KB attachment limit: " + attachment.Name);
+                        content += "\r\n\r\n[Attached file: " + attachment.Name + "]\r\n" + File.ReadAllText(path, Encoding.UTF8);
+                    }
+                }
+            }
+            Dictionary<string, object> item = new Dictionary<string, object>(); item["role"] = message.Role; item["content"] = content;
+            if (images.Count > 0) item["images"] = images;
+            transcript.Add(item);
+        }
+        return transcript;
+    }
+
+    private static bool ChatNeedsVisionModel(ChatRecord chat)
+    {
+        if (chat == null || chat.Messages == null) return false;
+        int first = Math.Max(0, chat.Messages.Count - 12);
+        for (int i = first; i < chat.Messages.Count; i++)
+        {
+            List<ChatAttachment> attachments = chat.Messages[i].Attachments;
+            if (attachments != null) foreach (ChatAttachment attachment in attachments) if (attachment != null && IsImageExtension(attachment.Extension)) return true;
+        }
+        return false;
+    }
+
+    private static string ImageMimeType(string extension)
+    {
+        if (extension == ".jpg" || extension == ".jpeg") return "image/jpeg";
+        if (extension == ".gif") return "image/gif";
+        if (extension == ".bmp") return "image/bmp";
+        if (extension == ".tif" || extension == ".tiff") return "image/tiff";
+        return "image/png";
+    }
+
+    private static byte[] ReadVisionImage(string path, string extension, out string mimeType)
+    {
+        if (extension != ".tif" && extension != ".tiff")
+        {
+            mimeType = ImageMimeType(extension);
+            return File.ReadAllBytes(path);
+        }
+
+        using (Image image = Image.FromFile(path))
+        using (MemoryStream output = new MemoryStream())
+        {
+            ImageCodecInfo jpeg = null;
+            foreach (ImageCodecInfo codec in ImageCodecInfo.GetImageEncoders()) if (codec.FormatID == ImageFormat.Jpeg.Guid) { jpeg = codec; break; }
+            if (jpeg == null) throw new InvalidOperationException("The local image converter could not encode TIFF attachments.");
+            using (EncoderParameters parameters = new EncoderParameters(1))
+            {
+                parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 92L);
+                image.Save(output, jpeg, parameters);
+            }
+            mimeType = "image/jpeg";
+            return output.ToArray();
+        }
     }
 
     private static void FinishResponse(ChatRecord target, string targetAgent, string content, string error, Dictionary<string, object> result)
@@ -684,49 +1012,28 @@ internal static class PattLuckyCodex
 
     private static void PullAgentModel(AgentInfo agent)
     {
-        if (!connected) { SetHint("Starting Ollama for the selected model…"); StartOllamaFromGui(); UpdateModelManager(); return; }
-        if (availableModels.Contains(agent.Model)) { SetHint(agent.Model + " is ready to use."); UpdateModelManager(); return; }
-        if (downloadingModels.Contains(agent.Model)) { SetHint(agent.Model + " is already downloading."); return; }
-        downloadingModels.Add(agent.Model); modelDownloadProgress[agent.Model] = "Preparing…"; modelLayerBytes[agent.Model] = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase); UpdateModelManager(); SetHint("Starting download for " + agent.Model + "…");
+        StartModelDownload(agent.Model);
+    }
+
+    private static ModelInfo ModelById(string modelId)
+    {
+        foreach (ModelInfo model in Models) if (String.Equals(model.Id, modelId, StringComparison.OrdinalIgnoreCase)) return model;
+        throw new InvalidOperationException("The selected local model is not configured.");
+    }
+
+    private static void StartModelDownload(string modelId)
+    {
+        ModelInfo model = ModelById(modelId);
+        if (availableModels.Contains(model.Id)) { SetHint(model.Name + " is ready to use."); UpdateModelManager(); return; }
+        if (downloadingModels.Contains(model.Id)) { SetHint(model.Name + " is already downloading."); return; }
+        downloadingModels.Add(model.Id); modelDownloadProgress[model.Id] = "Preparing…"; UpdateModelManager(); SetHint("Preparing the local engine and downloading " + model.Name + "…");
         ThreadPool.QueueUserWorkItem(delegate {
             try {
-                byte[] payload = Encoding.UTF8.GetBytes(Json.Serialize(new Dictionary<string, object> { { "model", agent.Model }, { "stream", true } }));
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:11434/api/pull"); request.Method = "POST"; request.ContentType = "application/json"; request.Timeout = Timeout.Infinite; request.ReadWriteTimeout = Timeout.Infinite; request.ContentLength = payload.Length;
-                using (Stream requestStream = request.GetRequestStream()) requestStream.Write(payload, 0, payload.Length);
-                bool completedSuccessfully = false;
-                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-                using (StreamReader reader = new StreamReader(response.GetResponseStream()))
-                {
-                    string line;
-                    while ((line = reader.ReadLine()) != null)
-                    {
-                        if (String.IsNullOrWhiteSpace(line)) continue;
-                        Dictionary<string, object> update = Json.Deserialize<Dictionary<string, object>>(line);
-                        if (update == null) continue;
-                        object error; if (update.TryGetValue("error", out error)) throw new InvalidOperationException(Convert.ToString(error));
-                        object statusValue; string status = update.TryGetValue("status", out statusValue) ? Convert.ToString(statusValue) : "Downloading";
-                        object completedValue, totalValue; long completed = update.TryGetValue("completed", out completedValue) ? Convert.ToInt64(completedValue) : 0; long total = update.TryGetValue("total", out totalValue) ? Convert.ToInt64(totalValue) : 0;
-                        object digestValue; string digest = update.TryGetValue("digest", out digestValue) ? Convert.ToString(digestValue) : null;
-                        BeginUpdate(delegate {
-                            if (!downloadingModels.Contains(agent.Model)) return;
-                            if (!String.IsNullOrEmpty(digest) && total > 0) {
-                                Dictionary<string, long> layers; if (!modelLayerBytes.TryGetValue(agent.Model, out layers)) { layers = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase); modelLayerBytes[agent.Model] = layers; }
-                                layers[digest] = Math.Max(0, Math.Min(completed, total)); long downloaded = 0; foreach (long bytes in layers.Values) downloaded += bytes;
-                                int percent = Math.Min(99, (int)(downloaded * 100.0 / ExpectedModelBytes(agent)));
-                                modelDownloadProgress[agent.Model] = "~" + percent + "% total";
-                            } else if (status == "verifying sha256 digest") modelDownloadProgress[agent.Model] = "Checking…";
-                            else if (status == "writing manifest" || status == "removing any unused layers") modelDownloadProgress[agent.Model] = "Finishing…";
-                            else if (String.Equals(status, "success", StringComparison.OrdinalIgnoreCase)) modelDownloadProgress[agent.Model] = "Finishing…";
-                            else if (modelLayerBytes[agent.Model].Count == 0) modelDownloadProgress[agent.Model] = "Preparing…";
-                            UpdateModelManager();
-                        });
-                        if (String.Equals(status, "success", StringComparison.OrdinalIgnoreCase)) { completedSuccessfully = true; break; }
-                    }
-                }
-                if (!completedSuccessfully) throw new InvalidOperationException("Ollama ended the download before reporting success.");
-                BeginUpdate(delegate { downloadingModels.Remove(agent.Model); modelDownloadProgress.Remove(agent.Model); modelLayerBytes.Remove(agent.Model); availableModels.Add(agent.Model); UpdateWelcomeModelStates(); UpdateModelManager(); SetHint(agent.Model + " is installed and ready to use."); RefreshStatus(); });
+                Dictionary<string, object> result = PostJson("api/pull", new Dictionary<string, object> { { "model", model.Id } }, 15000);
+                object error; if (result.TryGetValue("error", out error)) throw new InvalidOperationException(Convert.ToString(error));
+                BeginUpdate(delegate { UpdateModelManager(); RefreshStatus(); });
             } catch (Exception ex) {
-                BeginUpdate(delegate { downloadingModels.Remove(agent.Model); modelDownloadProgress.Remove(agent.Model); modelLayerBytes.Remove(agent.Model); UpdateModelManager(); SetHint("Model download failed: " + ex.Message); });
+                BeginUpdate(delegate { downloadingModels.Remove(model.Id); modelDownloadProgress.Remove(model.Id); UpdateModelManager(); SetHint("Model download could not start: " + ex.Message); });
             }
         });
     }
@@ -734,145 +1041,47 @@ internal static class PattLuckyCodex
     private static void OpenModelManager()
     {
         if (modelManagerDialog != null && !modelManagerDialog.IsDisposed) { modelManagerDialog.Activate(); UpdateModelManager(); return; }
-        Form dialog = new Form(); modelManagerDialog = dialog; dialog.Text = "Local models · PattGPT Codex"; dialog.FormBorderStyle = FormBorderStyle.FixedDialog; dialog.MaximizeBox = false; dialog.MinimizeBox = false; dialog.ShowInTaskbar = false; dialog.StartPosition = FormStartPosition.CenterParent; dialog.ClientSize = new Size(650, 400); dialog.BackColor = bg; dialog.ForeColor = fg; dialog.Font = new Font("Segoe UI", 9.5f);
+        Form dialog = new Form(); modelManagerDialog = dialog; dialog.Text = "Local models · PattGPT Codex"; dialog.FormBorderStyle = FormBorderStyle.FixedDialog; dialog.MaximizeBox = false; dialog.MinimizeBox = false; dialog.ShowInTaskbar = false; dialog.StartPosition = FormStartPosition.CenterParent; dialog.ClientSize = new Size(650, 455); dialog.BackColor = bg; dialog.ForeColor = fg; dialog.Font = new Font("Segoe UI", 9.5f);
         Label title = new Label(); title.Text = "Local AI models"; title.Font = new Font("Segoe UI", 17, FontStyle.Bold); title.ForeColor = fg; title.SetBounds(24, 18, 300, 32); dialog.Controls.Add(title);
-        ollamaInstallButton = MakeButton("Install Ollama", false); ollamaInstallButton.SetBounds(342, 18, 132, 38); ollamaInstallButton.Click += delegate { DownloadOllamaInstaller(); }; dialog.Controls.Add(ollamaInstallButton);
-        ollamaStartButton = MakeButton("Start Ollama", true); ollamaStartButton.SetBounds(483, 18, 143, 38); ollamaStartButton.Click += delegate { StartOllamaFromGui(); }; dialog.Controls.Add(ollamaStartButton);
-        modelManagerStatus = new Label(); modelManagerStatus.Text = "Checking Ollama…"; modelManagerStatus.ForeColor = muted; modelManagerStatus.SetBounds(26, 54, 420, 24); dialog.Controls.Add(modelManagerStatus);
+        modelManagerStatus = new Label(); modelManagerStatus.Text = "Qwen3 8B is the lightweight default. Download a model only when you choose."; modelManagerStatus.ForeColor = muted; modelManagerStatus.SetBounds(26, 54, 600, 24); dialog.Controls.Add(modelManagerStatus);
         modelManagerButtons.Clear();
         int y = 94;
-        HashSet<string> listedModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (AgentInfo agent in Agents)
+        foreach (ModelInfo item in Models)
         {
-            if (!listedModels.Add(agent.Model)) continue;
-            AgentInfo item = agent;
-            Label name = new Label(); name.Text = item.Name; name.Font = new Font("Segoe UI", 10, FontStyle.Bold); name.ForeColor = fg; name.SetBounds(26, y, 230, 23); dialog.Controls.Add(name);
-            Label details = new Label(); details.Text = item.Model + "  ·  " + item.Size; details.ForeColor = muted; details.SetBounds(26, y + 23, 420, 21); dialog.Controls.Add(details);
-            Button install = MakeButton("Download", false); install.Tag = item; install.SetBounds(483, y + 5, 143, 36); install.Click += delegate { PullAgentModel(item); }; dialog.Controls.Add(install); modelManagerButtons.Add(install);
+            ModelInfo model = item;
+            Label name = new Label(); name.Text = model.Name; name.Font = new Font("Segoe UI", 10, FontStyle.Bold); name.ForeColor = fg; name.SetBounds(26, y, 440, 23); dialog.Controls.Add(name);
+            Label details = new Label(); details.Text = model.Size; details.ForeColor = muted; details.SetBounds(26, y + 23, 440, 21); dialog.Controls.Add(details);
+            Button install = MakeButton("Download", false); install.Tag = model; install.SetBounds(483, y + 5, 143, 36); install.Click += delegate { StartModelDownload(model.Id); }; dialog.Controls.Add(install); modelManagerButtons.Add(install);
             y += 67;
         }
-        Label note = new Label(); note.Text = "Ollama starts when needed and closes with PattGPT. Other apps using it disconnect."; note.ForeColor = muted; note.SetBounds(26, 365, 600, 22); dialog.Controls.Add(note);
-        dialog.FormClosed += delegate { if (modelManagerTimer != null) modelManagerTimer.Stop(); modelManagerDialog = null; modelManagerStatus = null; ollamaStartButton = null; ollamaInstallButton = null; modelManagerButtons.Clear(); };
-        modelManagerTimer = new System.Windows.Forms.Timer(); modelManagerTimer.Interval = 2000; modelManagerTimer.Tick += delegate { if (ollamaInstallPending && DateTime.UtcNow - ollamaInstallPendingSince > TimeSpan.FromMinutes(3)) ollamaInstallPending = false; UpdateModelManager(); if (!ollamaInstalled) RefreshOllamaInstallStatus(); }; modelManagerTimer.Start();
-        UpdateModelManager(); RefreshOllamaInstallStatus(); dialog.Show(form);
+        Label note = new Label(); note.Text = "First download needs internet; later chats can run offline. Model licenses apply."; note.ForeColor = muted; note.SetBounds(26, 414, 600, 22); dialog.Controls.Add(note);
+        dialog.FormClosed += delegate { if (modelManagerTimer != null) modelManagerTimer.Stop(); modelManagerDialog = null; modelManagerStatus = null; modelManagerButtons.Clear(); };
+        modelManagerTimer = new System.Windows.Forms.Timer(); modelManagerTimer.Interval = 2000; modelManagerTimer.Tick += delegate { UpdateModelManager(); RefreshStatus(); }; modelManagerTimer.Start();
+        UpdateModelManager(); dialog.Show(form);
     }
 
     private static void UpdateModelManager()
     {
         if (modelManagerDialog == null || modelManagerDialog.IsDisposed) return;
-        if (modelManagerStatus != null) modelManagerStatus.Text = connected ? "Ollama is installed and running. Choose a model to download." : (ollamaInstalled ? "Ollama is installed but stopped. Start it here to use models." : "Ollama is not installed. Install it once, then start it here.");
-        if (ollamaInstallButton != null && ollamaInstallerClient == null)
-        {
-            ollamaInstallButton.Text = ollamaInstalled ? "Ollama installed" : (ollamaInstallPending ? "Finish setup" : (ollamaStatusRequestActive != 0 ? "Checking…" : "Install Ollama"));
-            ollamaInstallButton.Enabled = !ollamaInstalled && !ollamaInstallPending && ollamaStatusRequestActive == 0;
-        }
-        if (ollamaStartButton != null) { ollamaStartButton.Enabled = !connected && ollamaInstallerClient == null; ollamaStartButton.Text = connected ? "Ollama running" : "Start Ollama"; }
+        if (modelManagerStatus != null) modelManagerStatus.Text = "Qwen3 8B is the lightweight default. Download a model only when you choose.";
         foreach (Button button in modelManagerButtons)
         {
-            AgentInfo agent = button.Tag as AgentInfo; if (agent == null) continue;
-            if (availableModels.Contains(agent.Model)) { button.Text = "Installed"; button.Enabled = false; }
-            else if (downloadingModels.Contains(agent.Model)) { string progress; button.Text = modelDownloadProgress.TryGetValue(agent.Model, out progress) ? progress : "Downloading…"; button.Enabled = false; }
-            else { button.Text = "Download"; button.Enabled = connected; }
-        }
-    }
-
-    private static void RefreshOllamaInstallStatus()
-    {
-        if (Interlocked.Exchange(ref ollamaStatusRequestActive, 1) != 0) return;
-        if (ollamaInstallButton != null) { ollamaInstallButton.Enabled = false; ollamaInstallButton.Text = "Checking…"; }
-        ThreadPool.QueueUserWorkItem(delegate {
-            try
-            {
-                Dictionary<string, object> state = GetJson("api/ollama/check", 4000);
-                bool installed = state.ContainsKey("installed") && Convert.ToBoolean(state["installed"]);
-                bool running = state.ContainsKey("running") && Convert.ToBoolean(state["running"]);
-                BeginUpdate(delegate { ollamaInstalled = installed || running; if (ollamaInstalled) ollamaInstallPending = false; if (running) connected = true; UpdateModelManager(); });
-            }
-            catch { BeginUpdate(delegate { UpdateModelManager(); }); }
-            finally { Interlocked.Exchange(ref ollamaStatusRequestActive, 0); BeginUpdate(delegate { UpdateModelManager(); }); }
-        });
-    }
-
-    private static long ExpectedModelBytes(AgentInfo agent)
-    {
-        // Ollama reports progress per layer, not per model. Use the displayed library
-        // size estimate and accumulate each digest so the percentage does not reset
-        // when Ollama moves from one layer to the next.
-        long gigabyte = 1000000000L;
-        if (agent.Key == "writer") return 790 * gigabyte / 100;
-        if (agent.Key == "coding") return 19 * gigabyte;
-        if (agent.Key == "creative" || agent.Key == "media") return 710 * gigabyte / 100;
-        return 125 * gigabyte / 100;
-    }
-
-    private static void StartOllamaFromGui()
-    {
-        if (ollamaStartButton != null) { ollamaStartButton.Enabled = false; ollamaStartButton.Text = "Starting…"; }
-        if (modelManagerStatus != null) modelManagerStatus.Text = "Starting the local Ollama service…";
-        ThreadPool.QueueUserWorkItem(delegate {
-            try {
-                PostJson("api/ollama/start", new Dictionary<string, object>(), 15000);
-                BeginUpdate(delegate { SetHint("Ollama is starting. Model controls will enable when it is ready."); RefreshStatus(); UpdateModelManager(); });
-            } catch (Exception ex) {
-                BeginUpdate(delegate { SetHint(ex.Message); if (modelManagerStatus != null) modelManagerStatus.Text = ex.Message; UpdateModelManager(); });
-            }
-        });
-    }
-
-    private static void DownloadOllamaInstaller()
-    {
-        if (ollamaInstalled || ollamaInstallPending) { SetHint(ollamaInstalled ? "Ollama is already installed. Start it from the Models window." : "Finish the Ollama setup window before trying another download."); UpdateModelManager(); return; }
-        if (ollamaInstallerClient != null) return;
-        try
-        {
-            ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
-            string folder = Path.Combine(Path.GetTempPath(), "PattLuckyCodex"); Directory.CreateDirectory(folder);
-            string installer = Path.Combine(folder, "OllamaSetup.exe");
-            ollamaInstallerClient = new WebClient(); ollamaInstallerClient.Headers[HttpRequestHeader.UserAgent] = "PattLuckyCodex/" + CurrentVersion;
-            ollamaInstallerClient.DownloadProgressChanged += delegate(object sender, DownloadProgressChangedEventArgs e) {
-                BeginUpdate(delegate { if (modelManagerStatus != null) modelManagerStatus.Text = "Downloading Ollama installer · " + e.ProgressPercentage + "%"; if (ollamaInstallButton != null) ollamaInstallButton.Text = e.ProgressPercentage + "%"; });
-            };
-            ollamaInstallerClient.DownloadFileCompleted += delegate(object sender, System.ComponentModel.AsyncCompletedEventArgs e) {
-                WebClient client = ollamaInstallerClient; ollamaInstallerClient = null; if (client != null) client.Dispose();
-                if (e.Error != null) {
-                    if (File.Exists(installer)) try { File.Delete(installer); } catch { }
-                    if (modelManagerStatus != null) modelManagerStatus.Text = "Ollama download failed. Check your internet and retry.";
-                    if (ollamaInstallButton != null) { ollamaInstallButton.Enabled = true; ollamaInstallButton.Text = "Retry install"; }
-                    SetHint("Could not download Ollama: " + e.Error.Message); UpdateModelManager(); return;
-                }
-                try {
-                    Process.Start(new ProcessStartInfo(installer) { UseShellExecute = true });
-                    ollamaInstallPending = true; ollamaInstallPendingSince = DateTime.UtcNow;
-                    if (modelManagerStatus != null) modelManagerStatus.Text = "Ollama setup opened. Finish installation, then start Ollama here.";
-                    SetHint("Ollama installer downloaded. Complete its setup window, then start Ollama from Models.");
-                    if (ollamaInstallButton != null) { ollamaInstallButton.Enabled = true; ollamaInstallButton.Text = "Install again"; }
-                } catch (Exception ex) {
-                    if (modelManagerStatus != null) modelManagerStatus.Text = "Installer downloaded, but could not be opened.";
-                    SetHint(ex.Message); if (ollamaInstallButton != null) { ollamaInstallButton.Enabled = true; ollamaInstallButton.Text = "Open installer"; }
-                }
-                UpdateModelManager();
-            };
-            if (ollamaInstallButton != null) { ollamaInstallButton.Enabled = false; ollamaInstallButton.Text = "0%"; }
-            if (ollamaStartButton != null) ollamaStartButton.Enabled = false;
-            if (modelManagerStatus != null) modelManagerStatus.Text = "Downloading the official Ollama installer…";
-            ollamaInstallerClient.DownloadFileAsync(new Uri("https://ollama.com/download/OllamaSetup.exe"), installer);
-        }
-        catch (Exception ex) {
-            if (ollamaInstallerClient != null) { ollamaInstallerClient.Dispose(); ollamaInstallerClient = null; }
-            if (ollamaInstallButton != null) { ollamaInstallButton.Enabled = true; ollamaInstallButton.Text = "Retry install"; }
-            if (modelManagerStatus != null) modelManagerStatus.Text = ex.Message; SetHint("Could not start the Ollama download: " + ex.Message); UpdateModelManager();
+            ModelInfo model = button.Tag as ModelInfo; if (model == null) continue;
+            if (availableModels.Contains(model.Id)) { button.Text = "Downloaded"; button.Enabled = false; }
+            else if (downloadingModels.Contains(model.Id)) { string progress; button.Text = modelDownloadProgress.TryGetValue(model.Id, out progress) ? progress : "Downloading…"; button.Enabled = false; }
+            else { button.Text = "Download"; button.Enabled = true; }
         }
     }
 
     private static void UpdateAgent()
     {
         if (agentPicker != null && agentPicker.SelectedIndex != AgentIndex(selected)) agentPicker.SelectedIndex = AgentIndex(selected);
-        AgentInfo a = AgentByKey(selected); if (modelLabel != null) modelLabel.Text = a.Model + "  ·  " + a.Size;
+        AgentInfo a = AgentByKey(selected); if (modelLabel != null) modelLabel.Text = ModelById(a.Model).Name + "  ·  " + a.Size;
         if (activeModelLabel != null && activeModelIcon != null)
         {
-            string shortName = a.Key == "writer" ? "WRITER" : (a.Key == "coding" ? "CODER" : (a.Key == "creative" ? "CREATIVE" : (a.Key == "media" ? "MEDIA" : "LITE")));
-            Color accent = AgentAccent(a.Key); activeModelLabel.Text = shortName + "  ·  " + a.Model; activeModelLabel.ForeColor = accent; activeModelLabel.BackColor = MixColor(sidebar, accent, 0.10f);
-            activeModelIcon.Text = a.Key == "writer" ? "W" : (a.Key == "coding" ? "C" : (a.Key == "creative" ? "R" : (a.Key == "media" ? "M" : "L"))); activeModelIcon.BackColor = sidebar; activeModelIcon.ForeColor = sidebar; activeModelIcon.Invalidate();
+            string shortName = a.Key == "writer" ? "WRITER" : (a.Key == "coding" ? "CODER" : (a.Key == "creative" ? "CREATIVE" : (a.Key == "media" ? "MEDIA" : (a.Key == "business" ? "OPS" : "LITE"))));
+            Color accent = AgentAccent(a.Key); activeModelLabel.Text = shortName + "  ·  " + ModelById(a.Model).Name; activeModelLabel.ForeColor = accent; activeModelLabel.BackColor = MixColor(sidebar, accent, 0.10f);
+            activeModelIcon.Text = a.Key == "writer" ? "W" : (a.Key == "coding" ? "C" : (a.Key == "creative" ? "R" : (a.Key == "media" ? "M" : (a.Key == "business" ? "B" : "L")))); activeModelIcon.BackColor = sidebar; activeModelIcon.ForeColor = sidebar; activeModelIcon.Invalidate();
         }
         if (getModelButton != null) { getModelButton.Enabled = true; getModelButton.Text = "Models"; }
         RefreshActiveChatState();
@@ -887,7 +1096,7 @@ internal static class PattLuckyCodex
             Stopwatch timer; string model;
             if (activeBusy && chatResponseTimers.TryGetValue(current.Id, out timer) && chatResponseModels.TryGetValue(current.Id, out model))
                 hintLabel.Text = "Thinking locally with " + model + " · " + FormatDuration(timer.ElapsedMilliseconds);
-            else hintLabel.Text = "Runs on your computer · First model download needs internet";
+            else hintLabel.Text = "Enter sends · Shift+Enter adds a line · Qwen3 8B is the lightweight default";
         }
         if (spinTimer != null)
         {
@@ -902,12 +1111,26 @@ internal static class PattLuckyCodex
         if (key == "coding") return Color.FromArgb(74, 198, 235);
         if (key == "creative") return Color.FromArgb(255, 132, 159);
         if (key == "media") return Color.FromArgb(242, 156, 72);
+        if (key == "business") return Color.FromArgb(91, 150, 190);
         return Lime;
     }
 
     private static Color MixColor(Color baseColor, Color accent, float amount)
     {
         return Color.FromArgb((int)(baseColor.R * (1 - amount) + accent.R * amount), (int)(baseColor.G * (1 - amount) + accent.G * amount), (int)(baseColor.B * (1 - amount) + accent.B * amount));
+    }
+
+    private static GraphicsPath CreateRoundedPath(Rectangle bounds, int radius)
+    {
+        GraphicsPath path = new GraphicsPath();
+        int diameter = Math.Min(Math.Max(0, radius * 2), Math.Min(bounds.Width, bounds.Height));
+        if (diameter < 2) { path.AddRectangle(bounds); return path; }
+        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
+        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 
     private static void RefreshStatus()
@@ -917,8 +1140,39 @@ internal static class PattLuckyCodex
             try {
                 Dictionary<string, object> result = GetJson("api/models", 5000); bool isConnected = Convert.ToBoolean(result["connected"]); HashSet<string> models = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 object raw; if (result.TryGetValue("models", out raw)) { IEnumerable arr = raw as IEnumerable; if (arr != null) foreach (object item in arr) models.Add(Convert.ToString(item)); }
-                BeginUpdate(delegate { connected = isConnected; availableModels.Clear(); foreach (string model in models) availableModels.Add(model); UpdateWelcomeModelStates(); ollamaLabel.Text = connected ? "● OLLAMA ON" : "● OLLAMA OFF"; ollamaLabel.ForeColor = connected ? Color.FromArgb(91, 150, 25) : Color.FromArgb(210, 100, 72); if (statusToggle != null) statusToggle.Text = StatusToggleText(); if (welcomeStatus != null) welcomeStatus.Text = connected ? "Ollama is connected. Choose an agent and install its model to begin." : "Start Ollama, choose an agent, and install its model to begin."; UpdateAgent(); UpdateModelManager(); });
-            } catch { BeginUpdate(delegate { connected = false; ollamaLabel.Text = "● OLLAMA OFF"; ollamaLabel.ForeColor = Color.FromArgb(210, 100, 72); UpdateAgent(); UpdateModelManager(); }); }
+                Dictionary<string, object> pulls = GetJson("api/pulls", 5000); object rawPulls;
+                if (pulls.TryGetValue("pulls", out rawPulls))
+                {
+                    Dictionary<string, object> jobs = rawPulls as Dictionary<string, object>;
+                    if (jobs != null) foreach (KeyValuePair<string, object> pair in jobs)
+                    {
+                        Dictionary<string, object> job = pair.Value as Dictionary<string, object>; if (job == null) continue;
+                        string state = job.ContainsKey("state") ? Convert.ToString(job["state"]) : "";
+                        if (state == "installed") models.Add(pair.Key);
+                        else if (state == "downloading" || state == "waiting" || state == "verifying")
+                        {
+                            string stage = job.ContainsKey("stage") ? Convert.ToString(job["stage"]) : "Downloading";
+                            string progress = job.ContainsKey("progress") ? Convert.ToString(job["progress"]) : "";
+                            modelDownloadProgress[pair.Key] = String.IsNullOrEmpty(progress) ? stage + "…" : progress + "%";
+                        }
+                        else if (state == "failed")
+                        {
+                            string error = job.ContainsKey("error") ? Convert.ToString(job["error"]) : "Download failed.";
+                            modelDownloadProgress[pair.Key] = "Retry";
+                            if (downloadingModels.Remove(pair.Key)) SetHint("Model download failed: " + error);
+                        }
+                    }
+                }
+                BeginUpdate(delegate {
+                    connected = isConnected;
+                    availableModels.Clear(); foreach (string model in models) availableModels.Add(model);
+                    foreach (string model in models) { downloadingModels.Remove(model); modelDownloadProgress.Remove(model); }
+                    UpdateWelcomeModelStates();
+                    localAiLabel.Text = connected ? "● LOCAL AI" : "● LOCAL SERVICE OFF"; localAiLabel.ForeColor = connected ? Color.FromArgb(91, 150, 25) : Color.FromArgb(210, 100, 72);
+                    if (statusToggle != null) statusToggle.Text = StatusToggleText();
+                    UpdateAgent(); UpdateModelManager();
+                });
+            } catch { BeginUpdate(delegate { connected = false; localAiLabel.Text = "● LOCAL SERVICE OFF"; localAiLabel.ForeColor = Color.FromArgb(210, 100, 72); UpdateAgent(); UpdateModelManager(); }); }
             finally { Interlocked.Exchange(ref statusRequestActive, 0); }
         });
     }
@@ -1020,7 +1274,7 @@ internal static class PattLuckyCodex
     }
 
     private static void SetHint(string text) { if (hintLabel != null) hintLabel.Text = text; }
-    private static string StatusToggleText() { return (connected ? "● OLLAMA ON" : "● OLLAMA OFF") + "  ·  STATUS  " + (statusExpanded ? "⌄" : "›"); }
+    private static string StatusToggleText() { return (connected ? "● LOCAL AI" : "● LOCAL SERVICE OFF") + "  ·  STATUS  " + (statusExpanded ? "⌄" : "›"); }
     private static void ScrollMessages()
     {
         if (messages == null || messages.Controls.Count == 0) return;
@@ -1036,7 +1290,7 @@ internal static class PattLuckyCodex
     private static string Quote(string value) { return "\"" + value.Replace("\"", "\\\"") + "\""; }
     private static string FindResource(string name)
     {
-        string[] candidates = { Path.Combine(Root, name), Path.Combine(Root, "assets", name), Path.Combine(Root, "ui", name), Path.Combine(Root, "dist", name) };
+        string[] candidates = { Path.Combine(Root, name), Path.Combine(Root, "Assets", name), Path.Combine(Root, "ui", name), Path.Combine(Root, "dist", name) };
         foreach (string candidate in candidates) if (File.Exists(candidate)) return candidate;
         return candidates[0];
     }
@@ -1068,9 +1322,10 @@ internal static class PattLuckyCodex
                     if (chat.Messages == null) chat.Messages = new List<MessageRecord>();
                     chat.Messages.RemoveAll(delegate(MessageRecord message) { return message == null; });
                     bool validAgent = false; foreach (AgentInfo agent in Agents) if (String.Equals(agent.Key, chat.Agent, StringComparison.OrdinalIgnoreCase)) validAgent = true;
-                    if (!validAgent) chat.Agent = "writer";
+                    if (!validAgent) chat.Agent = DefaultAgentKey;
                     foreach (MessageRecord message in chat.Messages)
                     {
+                        if (message.Attachments == null) message.Attachments = new List<ChatAttachment>();
                         bool validMessageAgent = false; foreach (AgentInfo agent in Agents) if (String.Equals(agent.Key, message.Agent, StringComparison.OrdinalIgnoreCase)) validMessageAgent = true;
                         if (!validMessageAgent) message.Agent = chat.Agent;
                     }
@@ -1412,8 +1667,47 @@ internal static class PattLuckyCodex
     }
 
     private sealed class AgentInfo { public string Key, Name, Model, Size, Description; public AgentInfo(string key, string name, string model, string size, string description) { Key = key; Name = name; Model = model; Size = size; Description = description; } }
+    private sealed class ModelInfo { public string Id, Name, Size; public ModelInfo(string id, string name, string size) { Id = id; Name = name; Size = size; } }
     private sealed class BufferedForm : Form { public BufferedForm() { DoubleBuffered = true; ResizeRedraw = true; } }
     private sealed class BufferedPanel : Panel { public BufferedPanel() { DoubleBuffered = true; ResizeRedraw = true; } }
+    private sealed class RoundedPanel : Panel
+    {
+        private int cornerRadius = 10;
+        private Color borderColor = line;
+        private Color focusedBorderColor = Lime;
+        private bool isFocused;
+        public int CornerRadius { get { return cornerRadius; } set { cornerRadius = Math.Max(0, value); UpdateRegion(); Invalidate(); } }
+        public Color BorderColor { get { return borderColor; } set { borderColor = value; Invalidate(); } }
+        public Color FocusedBorderColor { get { return focusedBorderColor; } set { focusedBorderColor = value; Invalidate(); } }
+        public bool IsFocused { get { return isFocused; } set { if (isFocused != value) { isFocused = value; Invalidate(); } } }
+        public RoundedPanel() { DoubleBuffered = true; ResizeRedraw = true; SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true); }
+        protected override void OnSizeChanged(EventArgs e) { base.OnSizeChanged(e); UpdateRegion(); }
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            Rectangle bounds = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
+            using (GraphicsPath path = CreateRoundedPath(bounds, cornerRadius))
+            using (SolidBrush fill = new SolidBrush(BackColor)) e.Graphics.FillPath(fill, path);
+        }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            if (Width < 2 || Height < 2) return;
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            Rectangle bounds = new Rectangle(0, 0, Width - 1, Height - 1);
+            using (GraphicsPath path = CreateRoundedPath(bounds, cornerRadius))
+            using (Pen border = new Pen(isFocused ? focusedBorderColor : borderColor, isFocused ? 1.6f : 1f))
+                e.Graphics.DrawPath(border, path);
+        }
+        private void UpdateRegion()
+        {
+            if (Width < 2 || Height < 2) return;
+            Region oldRegion = Region;
+            using (GraphicsPath path = CreateRoundedPath(new Rectangle(0, 0, Width, Height), cornerRadius))
+                Region = new Region(path);
+            if (oldRegion != null) oldRegion.Dispose();
+        }
+    }
     private sealed class AgentMarkLabel : Label
     {
         public AgentMarkLabel() { SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true); }
@@ -1470,20 +1764,20 @@ internal static class PattLuckyCodex
         protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
         protected override void OnPaint(PaintEventArgs e)
         {
-            e.Graphics.SmoothingMode = SmoothingMode.None;
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             Color fill = BackColor;
-            if (!Enabled) fill = Primary ? Color.FromArgb(101, 125, 68) : Color.FromArgb(125, 130, 120);
+            if (!Enabled) fill = Blend(BackColor, fg, 0.22f);
             else if (pressed) fill = Primary ? Color.FromArgb(139, 199, 35) : Blend(BackColor, Lime, 0.16f);
             else if (hovered) fill = Primary ? Color.FromArgb(178, 237, 76) : Blend(BackColor, Lime, 0.09f);
+            Rectangle surface = new Rectangle(0, 0, Math.Max(1, Width - 1), Math.Max(1, Height - 1));
+            int radius = Math.Min(8, Math.Max(1, Height / 2));
             using (SolidBrush brush = new SolidBrush(fill))
+            using (GraphicsPath path = CreateRoundedPath(surface, radius))
             {
-                e.Graphics.FillRectangle(brush, ClientRectangle);
+                e.Graphics.FillPath(brush, path);
+                Color borderColor = Focused ? Lime : (Primary ? Color.FromArgb(112, 157, 29) : Blend(line, fg, hovered ? 0.42f : 0.30f));
+                using (Pen border = new Pen(borderColor, Focused ? 1.6f : 1f)) e.Graphics.DrawPath(border, path);
             }
-            // Keep a clear edge on every button, including lime primary actions.
-            // The former 8% tint was too subtle on dark panels and looked borderless.
-            Color borderColor = Focused ? Lime : (Primary ? Color.FromArgb(112, 157, 29) : Blend(line, fg, hovered ? 0.42f : 0.30f));
-            using (Pen border = new Pen(borderColor, 1f))
-                e.Graphics.DrawRectangle(border, 0, 0, Math.Max(0, Width - 1), Math.Max(0, Height - 1));
             Color textColor = Enabled ? ForeColor : Color.FromArgb(190, 190, 190);
             TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine;
             if (TextAlign == ContentAlignment.MiddleLeft || TextAlign == ContentAlignment.TopLeft || TextAlign == ContentAlignment.BottomLeft) flags |= TextFormatFlags.Left;
@@ -1495,5 +1789,6 @@ internal static class PattLuckyCodex
         private static Color Blend(Color original, Color accent, float amount) { return Color.FromArgb((int)(original.R * (1 - amount) + accent.R * amount), (int)(original.G * (1 - amount) + accent.G * amount), (int)(original.B * (1 - amount) + accent.B * amount)); }
     }
     public sealed class ChatRecord { public string Id { get; set; } public string Title { get; set; } public string Agent { get; set; } public List<MessageRecord> Messages { get; set; } public ChatRecord() { Messages = new List<MessageRecord>(); } }
-    public sealed class MessageRecord { public string Role { get; set; } public string Content { get; set; } public string Agent { get; set; } public long Time { get; set; } public long DurationMilliseconds { get; set; } }
+    public sealed class MessageRecord { public string Role { get; set; } public string Content { get; set; } public string Agent { get; set; } public long Time { get; set; } public long DurationMilliseconds { get; set; } public List<ChatAttachment> Attachments { get; set; } public MessageRecord() { Attachments = new List<ChatAttachment>(); } }
+    public sealed class ChatAttachment { public string Id { get; set; } public string Name { get; set; } public string Extension { get; set; } }
 }

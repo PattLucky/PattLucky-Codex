@@ -1,13 +1,14 @@
 # PattGPT Codex
 
-PattGPT Codex is a lightweight Windows desktop chat app for local AI models. Its main interface is a native Windows Forms window; it does not open or require the Microsoft Edge browser. A small local PowerShell service connects the app to Ollama.
+PattGPT Codex is a lightweight Windows desktop chat app for local AI models. Its main interface is a native Windows Forms window; it does not open or require a browser. A small local PowerShell service runs a bundled llama.cpp inference engine and keeps chat requests on this PC.
 
 ## Project layout
 
 - `src/` — native Windows app source
 - `ui/` — optional browser preview interface
 - `Assets/` — app logo and icon
-- `dist/` — compiled app and downloadable installer bundle
+- `dist/` — current executable and versioned installer bundle
+- `dist/archive/` — older builds retained outside the current release folder
 - `build.ps1`, `launch.ps1`, `setup-wizard.ps1` — build, local service, and installer scripts
 
 ## Install
@@ -16,32 +17,43 @@ PattGPT Codex is a lightweight Windows desktop chat app for local AI models. Its
 2. Run `setup-wizard.ps1` and choose **Install & launch**.
 3. Open PattGPT Codex from the desktop shortcut.
 
-The app requires Windows PowerShell 5.1 and .NET Framework 4.x. Open **Models** to download the official Ollama installer and download any of the four agent models. Ollama starts only when you send a chat or request a model download; it is not launched just by opening PattGPT Codex. When PattGPT closes, its Ollama server, tray app, and active model downloads are stopped. This also disconnects other apps using Ollama. Only one PattGPT Codex instance can run at a time. Internet is needed for the initial Ollama and model downloads. Afterward, model inference and chat run on your computer without API keys or per-message fees.
+The app requires Windows PowerShell 5.1 and .NET Framework 4.x. **Lite chat with Qwen3 8B is the default for new chats**; open **Models** to download it when you are ready. The app downloads and verifies the pinned llama.cpp CPU runtime and selected GGUF model files under `%LOCALAPPDATA%\PattGPT Codex`; inference does not depend on hosted AI services. Nothing downloads just by opening PattGPT Codex. The first engine/model download needs internet and several gigabytes of free disk space. After downloading, inference runs locally and chats can work offline without API keys or per-message fees. Only one PattGPT Codex instance can run at a time.
 
 ## Local agents
 
-- Essays and documents: `gemma4:12b` (about 7.7–8 GB)
-- Coding: `qwen3-coder:30b` (about 19 GB)
-- Creative writing: `qwen3.5:9b` (about 6.6–7.6 GB)
-- Lite chat: `qwen3.5:0.8b` (about 1.2–1.3 GB)
+- Essays and documents: Qwen3 14B Q4_K_M (about 9.0 GB; 16 GB RAM recommended)
+- Coding: Qwen3 Coder 30B A3B Q4_K_M (about 18.6 GB; 32 GB RAM recommended)
+- Creative writing: Qwen3 14B Q4_K_M (about 9.0 GB; 16 GB RAM recommended)
+- Lite chat (default): Qwen3 8B Q4_K_M (about 5.0 GB; 8 GB RAM recommended)
+- Image understanding: Qwen3-VL 8B plus its vision projector (about 5.8 GB; 8 GB RAM recommended)
+
+Models are downloaded on demand, not bundled with the app. The four model downloads total about 38.4 GB if you install all of them. The built-in runtime currently uses the CPU, so generation speed depends on your processor and available memory.
+
+## Chat images and attachments
+
+In the native Windows app, use **＋ Attach** or drag files into the message composer. A message can include up to five PNG, JPEG, GIF, BMP, or TIFF images (8 MB per image and 20 MB combined), plus plain-text or code files such as TXT, Markdown, CSV, JSON, XML, HTML, CSS, JavaScript, TypeScript, C#, PowerShell, Python, Java, SQL, and LOG (32 KB per file and 64 KB combined). Images are analyzed by the local Qwen3-VL model; install it from **Models** to use image understanding. To keep requests within memory limits, the app sends up to 20 MB of the most recent image attachments with each request. Text and code files are included in the model prompt as attachment content. Attachments are copied locally under `%LOCALAPPDATA%\PattGPT Codex\attachments` and remain available with saved chats; they are not sent to a hosted service. PDFs and other binary document formats are not currently supported.
+
+## Business workflows
+
+Choose **Business workflows** for a professional local assistant that marks missing facts as `[TBD]` instead of inventing details. The **Templates** button in the message composer inserts reusable starting prompts for client proposals, SOPs, client emails, meeting minutes and action items, project briefs, weekly status reports, executive decision briefs, and risk registers. Existing text in the composer is preserved as source context when a template is inserted. Review generated business content before sending it externally; the model does not verify legal, regulatory, financial, or operational claims.
 
 ## Local photo and video generation
 
-Choose **Photo & video creator (BETA in img gen)** for help writing prompts, shot lists, and visual direction with the local `qwen3.5:9b` model. Open **Media Studio · BETA** in the native Windows app to render actual images or videos through [ComfyUI](https://github.com/Comfy-Org/ComfyUI), an open-source tool that runs on your computer. Image generation is beta. PattGPT Codex does not send prompts to a hosted provider, require an API key, or charge per generation. The optional browser preview remains chat-only.
+Choose **Photo & video creator (BETA in img gen)** for help writing prompts, shot lists, and visual direction with the local Qwen3 14B model. Open **Media Studio · BETA** in the native Windows app to render actual images or videos through [ComfyUI](https://github.com/Comfy-Org/ComfyUI), an open-source tool that runs on your computer. Image generation is beta. PattGPT Codex does not send prompts to a hosted provider, require an API key, or charge per generation. The optional browser preview is chat-only.
 
 ComfyUI and its generation models are installed separately and can require substantial disk space and a supported GPU; model downloads may use internet bandwidth. Install ComfyUI and the image or video models you choose, start it at `http://127.0.0.1:8188`, then export a workflow in ComfyUI's **API format** and load that JSON file in Media Studio. Select the positive prompt input, enter a prompt, and choose **Generate locally**. Outputs are saved under `%LOCALAPPDATA%\PattGPT Codex\Media\Images` or `Videos`. The workflow determines the model, resolution, and output format; ComfyUI and model licenses apply. Media Studio accepts loopback addresses only and will not connect to hosted providers. Only load workflows and custom nodes you trust.
 
 This integration does not bundle ComfyUI or model weights and does not install them automatically. You stay in control of which open-source workflows and models you download.
 
-Each model downloads only when selected. The three larger models use roughly 34–35 GB combined; Lite chat is about 1.2–1.3 GB. Chat history is saved locally under `%LOCALAPPDATA%\PattGPT Codex\chats.json`, written atomically with a previous-save backup, and can be exported from the app.
+Chat history is saved locally under `%LOCALAPPDATA%\PattGPT Codex\chats.json`, written atomically with a previous-save backup, and can be exported from the app.
 
-Responses use speed-oriented Ollama defaults: thinking is disabled, answers are capped at 1,536 tokens, the context window is 8,192 tokens, and only the latest 12 chat messages are sent with each request. Older messages remain in local chat history but are left out of the model prompt to prevent long conversations from slowing down over time. Ollama keeps the active model loaded for up to 30 minutes after use to reduce delays between prompts.
+Only the latest 12 chat messages are sent with each request; older messages remain in local chat history to keep prompts bounded. The local model stays loaded while the selected model is in use. Switching to another model stops the previous local inference process.
 
-At startup, the installed version and GitHub update status appear beside each other in the app header. The checker compares against the latest published GitHub release and offers its release page when newer. Git builds automatically use `major.minor.commit-count` as the app version, so each new commit produces a higher build version without manually editing assembly metadata. Publish the matching `dist/PattGPTCodex-<version>.zip` as a GitHub release for the updater to detect it. A source archive without Git history falls back to the assembly version in `src/PattLuckyCodex.cs`.
+At startup, the installed version and GitHub update status appear beside each other in the app header. The checker compares against the latest published GitHub release and offers its release page when newer. The version in `AssemblyVersion` and `AssemblyFileVersion` in `src/PattLuckyCodex.cs` is the single release version. Publish the matching `dist/PattGPTCodex-<version>.zip` as a GitHub release for the updater to detect it.
 
 ## Build from source
 
-Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1` from the project folder. The script compiles `src/PattLuckyCodex.cs` with the version derived from the Git commit count and writes the app and versioned ZIP bundle into `dist/`. For a fixed release build, pass `-VersionOverride 2.0.5`. The installer archive is flattened so the setup wizard can install it directly.
+Run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1` from the project folder. The version in `AssemblyVersion` and `AssemblyFileVersion` in `src/PattLuckyCodex.cs` is the single release version. The build writes only that version's installer bundle and current executable to the top of `dist/`; older generated builds are preserved in `dist/archive/`. The installer archive is flattened so the setup wizard can install it directly.
 
 To preview the desktop app from the terminal after building, run `.\dist\PattGPTCodex.exe` from the project folder.
 

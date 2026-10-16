@@ -5,6 +5,4 @@ obj/
 *.suo
 *.tmp
 *.log
-PattLuckyCodex-Updated-*.exe
-PattLuckyCodex-Updated.exe
-dist/PattGPTCodex-Updated-*.exe
+dist/archive/
